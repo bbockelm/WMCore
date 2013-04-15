@@ -71,13 +71,14 @@ Software Release:
 #end def 
 
 #def performanceBlock
-Time per event (seconds): <input type="text" name="TimePerEvent" size=10 value=60 />
-Memory (Mbytes): <input type="text" name="Memory" size=10 value=2147483648 />
-Size per event (Kbytes): <input type="text" name="SizePerEvent" size=10 value=512000 /><br/>
+Time per event (Seconds): <input type="text" name="TimePerEvent" size=10 value=12 />
+Memory (MBytes): <input type="text" name="Memory" size=10 value=2300 />
+Size per event (KBytes): <input type="text" name="SizePerEvent" size=10 value=512 /><br/>
 #end def
 
 #def dqmOptions
 <input type="checkbox" name="EnableDQMHarvest"/>Enable DQM Harvesting<br/>
+DQM ConfigCacheID: <input type="text" name="DQMConfigCacheID" size=40 /><br/>
 DQM Sequences: <input type="text" name="DqmSequences" size=40 />
 DQM URL:
 <select name="DQMUploadUrl">
@@ -131,15 +132,13 @@ Campaign: <input type="text" name="Campaign" size=40 id="campaign" />
 
 #def ioBlock
 Input Dataset: <input type="text" name="InputDataset" size=40 /><br/>
-
+Open Running Timeout: <input type="text" name="OpenRunningTimeout" size=10 value="0"/><br/>
 DBS: <!--input type="text" name="dbs" value="http://cmsdbsprod.cern.ch/cms_dbs_prod_global/servlet/DBSServlet" size=80/><br/-->
 <select name="DbsUrl">
 		<option>http://cmsdbsprod.cern.ch/cms_dbs_prod_global/servlet/DBSServlet</option>
-                <option>http://cmsdbsprod.cern.ch/cms_dbs_ph_analysis_01/servlet/DBSServlet</option>
-                <option>http://cmsdbsprod.cern.ch/cms_dbs_ph_analysis_02/servlet/DBSServlet</option>
+        <option>http://cmsdbsprod.cern.ch/cms_dbs_ph_analysis_01/servlet/DBSServlet</option>
+        <option>http://cmsdbsprod.cern.ch/cms_dbs_ph_analysis_02/servlet/DBSServlet</option>
 		<option>https://cmsweb-dev.cern.ch/dbs/prod/global/DBSWriter</option>
-		<option>https://dbs3-dev01.cern.ch/dbs/prod/global/DBSWriter</option>
-		<option>http://cms-xen40.fnal.gov:8787/dbs/prod/global/DBSWriter</option>
 </select><br>
 #end def
 
@@ -156,6 +155,9 @@ function addSkim() {
   newdiv.innerHTML = 'Skim Name: <input type="text", name="SkimName'+nskim+'" size=20 value="skim'+nskim+'"/><br/>' 
   + ' Skim Input '+nskim+': <input type="text", name="SkimInput'+nskim+'" size=40"/><br/>' 
   +'Skim ConfigCache ID ' + nskim +': <input type="text" name="Skim'+nskim+'ConfigCacheID"/> <br/>'
+  +'Skim Time per Event ' + nskim +': <input type="text" name="SkimTimePerEvent'+nskim+'" size=10/> <br/>'
+  +'Skim Size per Event ' + nskim +': <input type="text" name="SkimSizePerEvent'+nskim+'" size=10/> <br/>'
+  +'Skim Memory ' + nskim +': <input type="text" name="SkimMemory'+nskim+'" size=10/> <br/>'
   ni.appendChild(newdiv);
   ++nskim;
 }

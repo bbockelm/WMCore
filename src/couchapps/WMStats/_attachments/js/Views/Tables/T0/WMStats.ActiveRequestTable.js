@@ -7,9 +7,19 @@ WMStats.ActiveRequestTable = function (requestData, containerDiv) {
     var tableConfig = {
         "iDisplayLength": 25,
         "sScrollX": "",
-        "sDom": 'lrtip',
         "aoColumns": [
+            {"sTitle": "D", 
+             "sDefaultContent": 0,
+             "fnRender": function ( o, val ) {
+                            return WMStats.Utils.formatDetailButton("detail");
+                        }},
+            {"sTitle": "L", 
+             "sDefaultContent": 0,
+             "fnRender": function ( o, val ) {
+                            return WMStats.Utils.formatDetailButton("drill");
+                        }},
             { "mDataProp": "workflow", "sTitle": "workflow"},
+            /*
             { "sDefaultContent": "new",
               "sTitle": "status", 
               "fnRender": function ( o, val ) {
@@ -33,6 +43,25 @@ WMStats.ActiveRequestTable = function (requestData, containerDiv) {
                            }
                            return status
                           }
+            },*/
+            { "mDataProp": function (source, type, val) { 
+                              return source.request_status[source.request_status.length -1].status
+                           }, "sTitle": "status",
+              "fnRender": function ( o, val ) {
+                            return formatWorkloadSummarylUrl(o.aData.workflow, 
+                                o.aData.request_status[o.aData.request_status.length -1].status);
+                          },
+              "bUseRendered": false
+            },
+            { "mDataProp": function (source, type, val) { 
+                              return source.request_status[source.request_status.length -1].update_time
+                           }, "sTitle": "duration",
+              "fnRender": function ( o, val ) {
+                            var currentTime = Math.round(new Date().getTime() / 1000);
+                            var startTime = o.aData.request_status[o.aData.request_status.length -1].update_time
+                            return WMStats.Utils.foramtDuration(currentTime - startTime)
+                          },
+              "bUseRendered": false
             },
             { "sDefaultContent": 0,
               "sTitle": "job progress", 
@@ -97,4 +126,4 @@ WMStats.ActiveRequestTable = function (requestData, containerDiv) {
     tableConfig.aaData = requestData.getList(runNumerDesc);
     
     return WMStats.Table(tableConfig).create(containerDiv, null);
-}
+};

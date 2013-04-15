@@ -4,6 +4,10 @@ function(newDoc, oldDoc, userCtx) {
    var docOp = oldDoc ? (newDoc._deleted === true ? DOCOPS.delet : DOCOPS.modif)
                       : DOCOPS.creat;
 
+   if (newDoc._deleted === true && !oldDoc) {
+     throw({forbidden: 'Do not create deleted docs'});
+   }
+
    // Function to get the user list of site/groups for the given role
    var getRole = function(role) {
       var roles = userCtx.roles;
@@ -39,6 +43,7 @@ function(newDoc, oldDoc, userCtx) {
    // The following rule aplies for all operation types
    var allowed = isGlobalAdm || matchesRole("production-operator","group:dataops")
                              || matchesRole("production-manager","group:dataops")
+                             || matchesRole("t0-operator","group:dataops")
                              || matchesRole("web-service","group:facops");
 
    // Throw if user not validated

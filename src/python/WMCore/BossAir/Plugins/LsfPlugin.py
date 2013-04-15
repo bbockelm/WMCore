@@ -17,13 +17,9 @@ import socket
 import logging
 import subprocess
 
-
 from WMCore.WMInit import getWMBASE
-
-from WMCore.BossAir.Plugins.BasePlugin import BasePlugin, BossAirPluginException
-
+from WMCore.BossAir.Plugins.BasePlugin import BasePlugin
 from WMCore.FwkJobReport.Report import Report
-
 
 class LsfPlugin(BasePlugin):
     """
@@ -46,7 +42,8 @@ class LsfPlugin(BasePlugin):
                      'DONE': 'Complete',
                      'EXIT': 'Error',
                      'UNKWN': 'Error',
-                     'ZOMBI': 'Error'}
+                     'ZOMBI': 'Error',
+                     'Timeout' : 'Error'}
 
         return stateDict
 
@@ -66,6 +63,7 @@ class LsfPlugin(BasePlugin):
         self.queue       = None
         self.resourceReq = None
         self.jobGroup    = None
+        self.basePrio    = getattr(config.BossAir, 'LsfBasePrio', 50)
 
         return
 
@@ -167,6 +165,19 @@ class LsfPlugin(BasePlugin):
                     else:
                         command += ' -oo %s/%s.%%J.out' % (lsfLogDir, jobName)
 
+                    if 'priority' in job:
+                        try:
+                            prio = int(job['priority'])
+                            command += ' -sp %i' % (self.basePrio + prio)
+                        except (ValueError, TypeError):
+                            logging.debug("Priority for job %i not castable to an int\n" % job['id'])
+                            logging.debug("Not setting priority")
+                            logging.debug("Priority: %s" % job['priority'])
+                        except Exception, ex:
+                            logging.debug("Got unhandled exception while setting priority for job %i\n" % job['id'])
+                            logging.debug(str(ex))
+                            logging.debug("Not setting priority")
+
                     command += ' < %s' % submitScriptFile
 
                     logging.info("Submitting LSF job: %s" % command)
@@ -181,7 +192,7 @@ class LsfPlugin(BasePlugin):
                     if returncode == 0:
                         # check for correct naming convention in PFN
                         regExpParser = re.compile('Job <([0-9]+)> is submitted to queue')
-                        match = regExpParser.match(stdout)
+                        match = regExpParser.search(stdout)
                         if match != None:
                             job['gridid'] = match.group(1)
                             successfulJobs.append(job)

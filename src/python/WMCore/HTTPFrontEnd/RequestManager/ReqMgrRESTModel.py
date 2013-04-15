@@ -1,15 +1,14 @@
-#!/usr/bin/env python
-
 """
 ReqMgrRESTModel
 
 This holds the methods for the REST model, all methods which
-will be available via HTTP PUT/GET/POST commands from the iconterface,
+will be available via HTTP PUT/GET/POST commands from the interface,
 the validation, the security for each, and the function calls for the
 DB interfaces they execute.
 
 https://twiki.cern.ch/twiki/bin/viewauth/CMS/ReqMgrSystemDesign
 """
+
 import sys
 import math
 import cherrypy
@@ -39,6 +38,18 @@ import WMCore.RequestManager.RequestDB.Interface.Request.Campaign           as C
 
 
 
+# request arguments which are deprecated at injection (2013-03-26)
+# 'RequestWorkflow' is an exception that is it deprecated at injection
+# but is created and stored in CouchDB, others not
+# have this global so that it can easily be access from unitteest
+deprecatedRequestArgs = ["ReqMgrGroupID",
+                         "ReqMgrRequestID",
+                         "ReqMgrRequestorID",
+                         "ReqMgrRequestBasePriority",
+                         "RequestWorkflow",
+                         "WorkflowSpec",
+                         "RequestSizeEvents",
+                         "RequestEventSize"]
 
 
 class ReqMgrRESTModel(RESTModel):
@@ -51,7 +62,7 @@ class ReqMgrRESTModel(RESTModel):
         self.configDBName = config.configDBName
         self.wmstatWriteURL = "%s/%s" % (self.couchUrl.rstrip('/'), config.wmstatDBName)
         self.security_params = {'roles':config.security_roles}
-
+        
         # Optional values for individual methods
         self.reqPriorityMax = getattr(config, 'maxReqPriority', 100)
 
@@ -130,14 +141,6 @@ class ReqMgrRESTModel(RESTModel):
                                 'files_merged', 'percent_written',
                                 'percent_success', 'dataset'],
                         secured=True, validation = [self.validateUpdates])
-        self._addMethod('POST', 'user', self.postUser,
-                        args = ['user', 'priority'],
-                        secured=True, security_params=self.security_params,
-                        validation = [self.isalnum, self.intpriority])
-        self._addMethod('POST',  'group', self.postGroup,
-                        args = ['group', 'priority'],
-                        secured=True, security_params=self.security_params,
-                        validation = [self.isalnum, self.intpriority])
         self._addMethod('DELETE', 'request', self.deleteRequest,
                         args = ['requestName'],
                         secured=True, security_params=self.security_params,
@@ -175,6 +178,9 @@ class ReqMgrRESTModel(RESTModel):
         self._addMethod('GET', 'configIDs', self.getConfigIDs,
                         args = ['prim', 'proc', 'tier'],
                         secured=True, validation=[self.isalnum], expires = 0)
+        self._addMethod('GET', 'requestsByStatusAndTeam', self.getRequestsByStatusAndTeam,
+                        args = ['teamName', 'status'], secured=True,
+                        validation=[self.isalnum], expires = 0)
 
         cherrypy.engine.subscribe('start_thread', self.initThread)
 
@@ -244,25 +250,12 @@ class ReqMgrRESTModel(RESTModel):
         WMCore.Lexicon.cmsswversion(index['version'])
         return index
 
-    def findRequest(self, requestName):
-        """
-        Either returns the request object, or None.
-        TODO:
-        interesting how such a query is implemented here when there is
-        database behind ...
-        
-        """
-        requests = ListRequests.listRequests()
-        for request in requests:
-            if request['RequestName'] == requestName:
-                return request
-        return None
 
     def getRequest(self, requestName=None):
         """ If a request name is specified, return the details of the request.
         Otherwise, return an overview of all requests """
         if requestName == None:
-            return GetRequest.getRequests()
+            result = GetRequest.getRequests()
         else:
             result = Utilities.requestDetails(requestName)
             try:
@@ -271,12 +264,16 @@ class ReqMgrRESTModel(RESTModel):
             except:
                 # Ignore errors, then we just don't have a team name
                 pass
-            return result
+        return result
+
 
     def getRequestNames(self):
+        # 2013-02-13 is wrong anyway (e.g. Campaign is not working)
+        # should be removed
         """ return all the request names in RequestManager as list """
         #TODO this could me combined with getRequest
         return GetRequest.getOverview()
+                
 
     def getOutputForRequest(self, requestName):
         """Return the datasets produced by this request."""
@@ -336,8 +333,13 @@ class ReqMgrRESTModel(RESTModel):
             result = GetRequest.getAssignmentsByName(request)
         return result
 
+    def getRequestsByStatusAndTeam(self, teamName, status):
+        """ Get a list of request names with the given team and status.
+        """
+        requestNames = ListRequests.listRequestsByTeam(teamName, status).keys()
+        return requestNames
 
-    def getUser(self, userName=None, group=None):
+    def getUser(self, userName = None, group = None):
         """ No args returns a list of all users.  Group returns groups this user is in.  Username
             returs a JSON with information about the user """
         if userName != None:
@@ -346,7 +348,6 @@ class ReqMgrRESTModel(RESTModel):
             result = {}
             result['groups'] = GroupInfo.groupsForUser(userName).keys()
             result['requests'] = UserRequests.listRequests(userName).keys()
-            result['priority'] = UserManagement.getPriority(userName)
             result.update(Registration.userInfo(userName))
             return result
         elif group != None:
@@ -357,14 +358,10 @@ class ReqMgrRESTModel(RESTModel):
 
 
     def getGroup(self, group=None, user=None):
-        """ No args lists all groups, one args returns JSON with users and priority """
+        """ No args lists all groups, one args returns JSON with users."""
         if group != None:
             result = {}
             result['users'] =  GroupInfo.usersInGroup(group)
-            try:
-                result['priority'] = GroupManagement.getPriority(group)
-            except IndexError:
-                raise cherrypy.HTTPError(404, "Cannot find group/group priority")
             return result
         elif user != None:
             return GroupInfo.groupsForUser(user).keys()
@@ -432,17 +429,34 @@ class ReqMgrRESTModel(RESTModel):
         return index
 
 
+    # had no permission control before, security issue fix
+    @cherrypy.tools.secmodv2(role=Utilities.security_roles(), group = Utilities.security_groups())
     def putRequest(self, requestName=None, status=None, priority=None):
         request = None
         if requestName:
-            request = self.findRequest(requestName)
+            try:
+                request = self.getRequest(requestName)
+            except Exception, ex:
+                # request presumably doesn't exist                
+                request = None
+    
         if request == None:
             # Create a new request, with a JSON-encoded schema that is
             # sent in the body of the HTTP request
             body = cherrypy.request.body.read()
             reqInputArgs = Utilities.unidecode(JsonWrapper.loads(body))
+            # check for forbidden input arguments:
+            for deprec in deprecatedRequestArgs:
+                if deprec in reqInputArgs:
+                    msg = ("Creating request failed, unsupported input arg: %s: %s" %
+                           (deprec, reqInputArgs[deprec]))
+                    self.error(msg)
+                    raise cherrypy.HTTPError(400, msg)
             reqInputArgs.setdefault('CouchURL', Utilities.removePasswordFromUrl(self.couchUrl))
+            reqInputArgs.setdefault('CouchWorkloadDBName', self.workloadDBName)
+            # wrong naming ... but it's all over the place, it's the config cache DB name
             reqInputArgs.setdefault('CouchDBName', self.configDBName)
+            reqInputArgs.setdefault('Requestor', cherrypy.request.user["login"])
             try:
                 self.info("Creating a request for: '%s'\n\tworkloadDB: '%s'\n\twmstatUrl: "
                              "'%s' ..." % (reqInputArgs, self.workloadDBName,
@@ -467,7 +481,7 @@ class ReqMgrRESTModel(RESTModel):
         # see if status & priority need to be upgraded
         if status != None:
             # forbid assignment here
-            if status == 'assigned' and request['RequestStatus'] != 'ops-hold':
+            if status == 'assigned':
                 raise cherrypy.HTTPError(403, "Cannot change status without a team.  Please use PUT /reqmgr/reqMgr/assignment/<team>/<requestName>")
             try:
                 Utilities.changeStatus(requestName, status, self.wmstatWriteURL)
@@ -485,15 +499,17 @@ class ReqMgrRESTModel(RESTModel):
         """
         Input assumes an existing request, checks that.
         The original existing request is not touched.
-        A new request is generated (and is in the 'new' state), it has
-        newly generate RequestName, new timestamp, RequestDate, however
-        -everything- else is copied from the original request.
+        A new request is generated.
+        The cloned request has a newly generated RequestName, new timestamp,
+        RequestDate, however -everything- else is copied from the original request.
+        Addition: since Edgar changed his mind, he no longer
+        wants this cloned request be in the 'new' state but put 
+        straight into 'assignment-approved' state.
         
         """
         request = None
         if requestName:
             self.info("Cloning request: request name: '%s'" % requestName)
-            #request = self.findRequest(requestName) # request is a dictionary here, incomplete
             requestOrigDict = self.getRequest(requestName)
             if requestOrigDict:
                 self.info("Request found, cloning ...")
@@ -501,14 +517,27 @@ class ReqMgrRESTModel(RESTModel):
                 # since we cloned the request, all the attributes
                 # manipulation in Utilities.makeRequest() should not be necessary
                 # the cloned request shall be identical but following arguments
-                toRemove = ("RequestName", "RequestDate", "timeStamp", "ReqMgrRequestID",
-                            "RequestWorkflow")
+                toRemove = ["RequestName",
+                            "RequestDate",
+                            "timeStamp"]
+                toRemove.extend(deprecatedRequestArgs)
+                            
                 for remove in toRemove:
-                    del requestOrigDict[remove]                
+                    try:
+                        del requestOrigDict[remove]
+                    except KeyError:
+                        pass
                 newReqSchema.update(requestOrigDict) # clone
+                
+                # problem that priority wasn't preserved went down from here:
+                # via CheckIn.checkIn() -> MakeRequest.createRequest() -> Request.New.py factory
                 request = Utilities.buildWorkloadAndCheckIn(self, newReqSchema,
                                                             self.couchUrl, self.workloadDBName,
                                                             self.wmstatWriteURL, clone=True)
+                # change the clone request state as desired
+                Utilities.changeStatus(newReqSchema["RequestName"],
+                                       "assignment-approved",
+                                        self.wmstatWriteURL)
                 return request
             else:
                 msg = "Request '%s' not found." % requestName
@@ -605,20 +634,28 @@ class ReqMgrRESTModel(RESTModel):
                 index[k] = float(index[k])
         return index
 
-    def postUser(self, user, priority):
-        """ Change the user's priority """
-        return UserManagement.setPriority(user, priority)
-
-    def postGroup(self, group, priority):
-        """ Change the group's priority """
-        return GroupManagement.setPriority(group, priority)
-
+    # had no permission control before, security issue fix
+    @cherrypy.tools.secmodv2(role=Utilities.security_roles(), group = Utilities.security_groups())
     def deleteRequest(self, requestName):
-        """ Deletes a request from the ReqMgr """
-        request = self.findRequest(requestName)
-        if request == None:
-            raise cherrypy.HTTPError(404, "No such request")
-        return RequestAdmin.deleteRequest(request['RequestID'])
+        """
+        Deletes a request from the ReqMgr MySQL/Oracle database
+        and also from CoucDB.
+        
+        """        
+        # 404 will be thrown automatically on a non-existing request
+        request = self.getRequest(requestName)
+        helper = Utilities.loadWorkload(request)
+        couchDocId = requestName
+        helper.deleteCouch(self.couchUrl, self.workloadDBName, couchDocId)
+                
+        # #4289 - Request delete operation deletes the request from
+        # MySQL/Oracle but not from CouchDB, fix here
+        # Seangchan shall also fix here deleting such requests from WMStats (#4398)
+        
+        # returns None ...
+        response = RequestAdmin.deleteRequest(requestName)
+        return response
+
 
     def deleteUser(self, user):
         """ Deletes a user, as well as deleting his requests and removing

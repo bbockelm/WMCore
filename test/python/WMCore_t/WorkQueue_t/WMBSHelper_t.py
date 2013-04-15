@@ -487,8 +487,8 @@ class WMBSHelperTest(unittest.TestCase):
         locationDAO = self.daoFactory(classname = "Locations.New")
         self.ses = []
         for site in ['T2_XX_SiteA', 'T2_XX_SiteB']:
-            locationDAO.execute(siteName = site, seName = self.siteDB.cmsNametoSE(site))
-            self.ses.append(self.siteDB.cmsNametoSE(site))
+            locationDAO.execute(siteName = site, seName = self.siteDB.cmsNametoSE(site)[0])
+            self.ses.append(self.siteDB.cmsNametoSE(site)[0])
 
     def createWMSpec(self, name = 'ReRecoWorkload'):
         wmspec = rerecoWorkload(name, rerecoArgs)
@@ -734,18 +734,6 @@ class WMBSHelperTest(unittest.TestCase):
         self.assertEqual(len(mergeWorkflow.outputMap.keys()), 1,
                          "Error: Wrong number of WF outputs.")
 
-        cleanupWorkflow = Workflow(name = "ResubmitTestWorkload",
-                                 task = "/ResubmitTestWorkload/CleanupTask")
-        cleanupWorkflow.load()
-
-        self.assertEqual(cleanupWorkflow.owner, "sfoulkes",
-                         "Error: Wrong owner.")
-        self.assertEqual(cleanupWorkflow.spec, os.path.join(self.workDir, cleanupWorkflow.name,
-                                                          "WMSandbox", "WMWorkload.pkl"),
-                         "Error: Wrong spec URL")
-        self.assertEqual(len(cleanupWorkflow.outputMap.keys()), 0,
-                         "Error: Wrong number of WF outputs.")
-
         unmergedMergeOutput = mergeWorkflow.outputMap["Merged"][0]["output_fileset"]
         unmergedMergeOutput.loadData()
 
@@ -807,10 +795,6 @@ class WMBSHelperTest(unittest.TestCase):
 
         return
 
-#    def testProduction(self):
-#        """Production workflow"""
-#        pass
-
     def testReReco(self):
         """ReReco workflow"""
         # create workflow
@@ -837,6 +821,22 @@ class WMBSHelperTest(unittest.TestCase):
         wmbs = self.createWMBSHelperWithTopTask(self.wmspec, block)
         files = wmbs.validFiles(self.dbs.getFileBlock(block)[block]['Files'])
         self.assertEqual(len(files), GlobalParams.numOfFilesPerBlock())
+
+    def testLumiMaskRestrictionsOK(self):
+        block = self.dataset + "#1"
+        self.wmspec.getTopLevelTask()[0].data.input.splitting.runs = ['1']
+        self.wmspec.getTopLevelTask()[0].data.input.splitting.lumis = ['1,1']
+        wmbs = self.createWMBSHelperWithTopTask(self.wmspec, block)
+        files = wmbs.validFiles(self.dbs.getFileBlock(block)[block]['Files'])
+        self.assertEqual(len(files), GlobalParams.numOfFilesPerBlock())
+
+    def testLumiMaskRestrictionsKO(self):
+        block = self.dataset + "#1"
+        self.wmspec.getTopLevelTask()[0].data.input.splitting.runs = ['123454321']
+        self.wmspec.getTopLevelTask()[0].data.input.splitting.lumis = ['123,123']
+        wmbs = self.createWMBSHelperWithTopTask(self.wmspec, block)
+        files = wmbs.validFiles(self.dbs.getFileBlock(block)[block]['Files'])
+        self.assertEqual(len(files), 0)
 
     def testDuplicateFileInsert(self):
         # using default wmspec

@@ -1,3 +1,311 @@
+0.9.58 to 0.9.59:
+  - Fix broken DBS3Buffer creation in Oracle.  Pull request 4543.
+  - Store correctly the SizePerEvent and friends.  Pull request #4540.
+  - Add the listDatasetFileDetails API to the DBSReader classes for CRAB3.  Pull
+    request #4539.
+  - Change the harvesting job splitter to have two distinct modes: periodic and
+    end of run.  Fix StdBase so that it configures the harvesting job splitter
+    correctly.  Pull request #4459.
+
+0.9.57 to 0.9.58:
+  - Catch empty lumi runs.  Pull request #4537.
+  - Include performance estimates in Condor JDLs.  Pull request #4536. 
+  - Avoid re-running performance killed jobs.  Pull request #4538.
+  - Fix the resource control call to load all T1s and T2s which was broken by
+    the migration to SiteDB V2.  Pull request #4532.
+
+0.9.56 to 0.9.57:
+  - Fix DbsUrl for clones. Pull request #4535.
+  - ReqMgr - removing wrong DBS URL from configuration. Pull request #4534.
+
+0.9.55 to 0.9.56:
+  - Merge requested by seangchan
+  - fix running close eta
+  - ReqMgr fixed unittets for #4516
+
+0.9.54 to 0.9.55:
+  - ReqMgr request parameter DbsUrl stored in CouchDB. Pull request #4516.
+
+0.9.53 to 0.9.54:
+  - Restore DBS Url in CouchDB. Pull request #4515.
+
+0.9.52 to 0.9.53:
+  - add requestor if not specified. Pull request #4514.
+
+0.9.51 to 0.9.52:
+  - WMStats April updates.  Pull request #4513.
+  - Fix the initial location for pileup.  Pull request #4512.
+  - Include workflow performance information in the workflow.  Pull request #4508.
+  - Add WMCore.WMSpec.Steps.Templates as a WorkQueue dependency.  Pull request
+    #4511.
+  - Allow the DBS blocking settings to be specified per request.  Pull request
+    #4471.
+  - Start tracking the location of pileup data in the WorkQueue.  Pull request
+    #4507.
+  - Add a validation function for the ReqMgr CouchApp.  Pull request #4505.
+  - Fix the job splitting page in ReqMgr to work in Firefox.  Pull request #4503. 
+  - Allow ACDC requests to use xrootd.  Pull request #4502. 
+  - Fix the ReqMgr GetRequest DAO so that it fetches all request information.  Pull request
+    #4501.
+  - Second round of ReqMgr CouchDB values fixes.  Pull request #4500.
+  - First round of ReqMgr CouchDB values fixes.  Pull request #4499.
+  - Updates to ReqMgr Oracle/CouchDB consistency tools.  Pull request #4497.
+  - Further remove per user and group priorities in the ReqMgr.  Fix links to broken
+    pages.  Pull request #4495. 
+  - Vastly simplify request priorities by removing per user and group priorities.  Pull
+    request #4494. 
+  - Properly display the ScramArch on the request details page and fix links to the
+    original config and tweak.  Pull request #4492.
+  - Add support for changing the job splitting parameters for a request from the ReqMgr
+    command line script.  Pull request #4470.
+  - Properly handle jobs with no input files that go through the cool off state.  Pull
+    request #4493.
+  - Add Transient OutputModule functionality to the TaskChain request type.  Pull request
+    #4488.
+  - When updating LogCollect information in WMStats from the JobAccountant don't bomb out
+    if there is a communication error.  Pull request #4481.
+
+0.9.50 to 0.9.51:
+  - Fixes automatic testing of TaskChain requests. Pull request #4489.
+  - Fix most unit tests. Pull request #4487.
+  - Merge pull request #4485 from dballesteros7/FixUnitTests
+  - Restore the T2_XX_SiteA/B/C sites, SEs and CEs  
+  - Merge pull request #4484 from giffels/sitedbv2-unittest-fix
+  - Fix broken unittest caused SiteDBv2 emulator. Pull request #4418.
+  - ReqMgr2 - CouchDB request docs null fields. Pull request #4466.
+  - SiteDB emulator
+  - Move Service/SiteDB to SiteDBv2
+
+0.9.49 to 0.9.50:
+  - Merge pull request #4463 from ticoann/add_acdc_info
+  - Merge pull request #4467 from hufnagel/lsfsubmitfix
+  - fix LSF submission when overloaded
+  - Merge pull request #4461 from dballesteros7/CheckReplicationStatusLQ
+  - WorkQueue fixes
+  - add the unittest
+  - add acdc and agent info in job document
+
+0.9.48 to 0.9.49:
+  - Fix straight to merge when splitting is changed.  Pull request #4457.
+  - Fix paused jobs script so that it doesn't crash if there are not paused
+    jobs.  Pull request #4455.
+  - Adds unit test for dashboard reco performance reporting.  Pull request
+    #4434.
+
+0.9.47 to 0.9.48:
+  - Update file metadata in WMBS if the file already exists.  Pull
+    request #4443.
+
+0.9.46 to 0.9.47:
+  - Fixes for campaign information in WMStates.  Pull request #4453.
+  - Improve site states functionality.  Pull request #4444.
+  - Fix diagnostics for when CMSSW segfaults.  Pull request #4445.
+  - Fix ACDC for MonteCarlo workflows.  Pull request #4452.
+  - Remove the check for the local wmc-dist-patch script as it is not 
+    shipped with the project source code. It gets included only during 
+    RPM build time.  Pull request #4446.
+  - Include task type priority in LSF jobs.  Pull request #4447.
+  - Fix file deletion in the CERN stageout plugin.  Pull request #4412.
+
+
+0.9.45 to 0.9.46:
+  - Make sure the campaign is passed to WMStats with ACDC requests.  Pull
+    request #4448.
+  - Merge pull request #4442 from ticoann/deploy_march_1
+  - Squashed commit of the following:
+  - Several WMStats improvements from pull request #4442:
+    * Reformat the request summary.
+    * Add log archive location information
+    * Submit agent information with a POST to avoid errors from
+      long messages.
+
+0.9.44 to 0.9.45:
+  - Fix issues with the handling of large requests in the WorkQueue.  Pull
+    request #4439.
+
+0.9.43 to 0.9.44:
+  - Bugfix in WMStats update document.  Pull request #4437.
+  - Updates to WMStats for the March cmsweb release.  Pull request #4436.
+  - Fix bug in stageout exception handler.  Pull request #4435.
+
+0.9.42 to 0.9.43:
+  - Improve ACDC splitting in the global queue.  Pull request #4433.
+
+0.9.40 to 0.9.41:
+  - Update the ReqMgr database consistency check logs and scripts.  Pull request
+    #4430.
+  - Fix unit tests that were broken by PhEDEx changes and output ignoring changes.
+    Pull request #4429.
+  - Fix a number of ReqMgr issues, pull request #4426:
+    * Fix issues on the job splitting page
+    * Fix display of output datasets for request that drop output modules
+    * Fix the lumiMissingByWorkflow view in the WorkloadSummary.
+    * Expose AutoApprove sites to ReqMgr.
+  - Add the ability to create open requests that will pickup new data as it
+    is added to DBS.  Pull request #4425. 
+  - Fix document deletion in CouchDB.  Pull request #4424, #4404, #4396. 
+  - When deleting a request in the ReqMgr delete it from CouchDB and Oracle.
+    Pull request #4423.  
+  - Delete the dead code in the Processing and Production directories for the 
+    ReqMgr.  Pull request #4421.
+  - Fix a number of ReqMgr issues, pull request #4419:
+    * Change the SoftTimeout default parameters value.
+    * Add access control when deleting requests.
+    * Add a state transition from completed to aborted.
+    * Display all possible LFNs for all requests.
+    * Fixes for ACDC resubmission. 
+  - Fixes for DBS3 upload only mode.  Pull request #4415.
+  - Archive rejected workflows and disable tracking in WMStats.  Pull request
+    #4414.
+  - Enforce integer processing versions.  Pull request #4402.
+  - Fix corner cases for smart error handling.  Pull request #4407.
+  - Fix problems with DBS3 upload uncovered during the DBS2/3 consistancy
+    check.  Pull request #4406.
+  - Prevent the TaskArchiver from crashing if central CouchDB is down.  Pull
+    request #4397.
+  - Fix a typo in the CouchCoucPoller.  Pull request #4393.
+  - Add suport for stageout from the HLT Cloud at CERN.  Pull request #4401.
+  - Support ReqMgr localhost testing/running.  Pull request #4395. 
+
+0.9.39 to 0.9.40:
+  - Fixes from the testing of DBS3 upload.  Pull request #4391.
+  - add script to unregister agent when agent is retired or inactive.
+    Pull request #4389. 
+  - check components are alive using pid and also thread status.  Pull
+     request #4381.
+  - Fix unit tests breakage due to Specs_t.  Pull request #4387.
+  - Get the correct times out of a report if any.  Pull request #4385.
+  - ReqMgr testing enhanced by TaskChain requests.  Pull request #4384.
+  - ReqMgr CustodialSite bug fix.  Pull request #4379.
+
+0.9.38 to 0.9.39:
+  - Display the amount of time a request has been in a particular state in
+    WMStats.  Pull request #4374.
+  - Fix the priority setting of cloned requests.  Pull request #4377.
+  - Fix the cmsRun configuration for DQM harvesting jobs.  Pull request #4371.
+
+0.9.37 to 0.9.38:
+  - Fix accounting of lumis when a run black/white list is specified for a 
+    request.  Pull request #4369.
+  - Add a column to the job table in WMStats to display the number of queued
+    jobs.  Pull request #4370.
+
+0.9.36 to 0.9.37:
+  - Give the t0-operator role writer permissions in WMStats.  Pull request
+    #4365.
+  - Fix PREP ID search in WMStats.  Pull request #4367.
+  - Retry WMStats replication when it fails.  Pull request #4362.
+  - Remove the t0wmstats dependencies.  Pull request #4359.
+  - The aborted-archived and normal-archived are final states and transitions out
+    of them should not be allowed.  Pull request #4360.
+  - Fix the EventBased splitting algorithm to work around issues with zero event
+    lumis.  Pull request #4361.
+  - Make sure that the run white and black lists gets passed to the job splitting
+    algorithms so that they can use them.  Pull request #4368.
+  - Fix the DBS3Uploader and modify it to support an upload only mode.  Kill off the
+    SQLite code in DBSBuffer and DBS3Buffer.  Pull request #4358.
+
+0.9.35 to 0.9.36:
+  - Minor ReqMgr fixes.  Pull request #4357: 
+    * Cloned requests will beging in the assignment-approved state instead
+      of new.
+    * PhEDEx subscriptions arguments have been added into the JSON request
+      template.
+  - Add the ability to not stage the output of a particular output module
+    to merged storage.  Pull request #4355.
+
+0.9.34 to 0.9.35:
+  - Add an option to the PhEDExInjector to make only replica subscriptions.  Pull
+    request #4354.
+  - Fix a bug with the handling of requests with the running-open and running-closed
+    status in WMStats.  Pull request #4353.
+  - WMStats updates - Add the ability to search by date and Prep ID,
+    improve the request detail view, add a couch status monitor, fix a 
+    bug when filtering and data is being refreshed.  Pull request #4352. 
+  - ReqMgr2 - Oracle, CouchDB database cleanup.  Pull request #4351.
+  - Update the ALCAHarvest runtime code to support the new dropbox 
+    format.  Pull request #4950.
+  - Fix EOS StageIn at CERN.  Pull request #4349.
+  - Fix the DQM Harvesting job splitter so that it properly handles sites
+    with multiple SEs.  Pull request #4348.
+  - Fix WMBSMergeBySize for sites that have multiple SEs.  Pull request
+    #4347.
+
+0.9.33 to 0.9.34:
+  - Fix sandbox creation so that is works with patch releases.  Pull request #4339.
+  - Display docstrings in RESTAPI documentation.  Pull request #4340.
+  - Fix the handling of the site parameter in the error summary when the site
+    is an empty dictionary.  Pull request #4342.
+  - Fix smart lumi splitting when running over a too big single lumi file.
+    Pull request #4334.
+  - Fix the cleanup of the workflow timestamp cache in the JobSubmitter.  Pull
+    request #4335.
+  - Remove dead code and view from the ReqMgr couchapp.  Pull request #4332.
+  - Avoid crashes on custodial PhEDEx subscriptions to non-MSS sites.  Pull
+    request #4325.
+  - Ensure that the JobSubmitter submits jobs from the oldest workflow first.
+    Pull request #4327.
+  - Add a method to WMStatsReader that reports requests sorted by state that also
+    includes a timestamp of the last state transition.  Pull request #4328.
+  - Remove dead code from the ConfigCache and clean up views.  Pull request
+    #4324.
+  - Fix WMStats so that it functions correctly when there are no jobs in a 
+    request.  Pull request #4326.
+  - Deploy WorkloadSummary with reqmon instead of ReqMgr.  Pull request #4232.
+  - Add a merged flag to the FWJR so that it's possible to calculat lumi information
+    for monitoring.  Pull request #4336.
+  - WMStats feature development, pull request #4345:
+     * Change the layout of the warning and summary box.
+     * Add more filters.
+     * Propagate more information (lumi, performance, job type)
+
+0.9.32 to 0.9.33:
+  - Publish job state transition information to WMStats.  Pull request #4311.
+  - Fix timeout kills in the LSF plugin.  Pull request #4322.
+  - Remve the unused RemoteMsg component and OpsClipboard.  Pull request #4316
+    and #4319.
+  - Make permissions stricter in the ReqMgr when changing request parameters.
+    Pull request #4313.
+  - Change LogCollect reporting from a reduce to list to avoid reduce overflows.  Pull
+    request #4312.
+  - Do the SE name => Site name conversion also for failed jobs.  Pull request #4308.
+
+0.9.31 to 0.9.32:
+  - Fix Reduce function for outputByWorkflowName.  Pull request #4310.
+  - Include the new PSet pickle in the logArchs.  Pull request #4307.
+  - Added basic http(s) url validation for DBS3.  Pull request #4306.
+
+0.9.30 to 0.9.31:
+  - Improve the WorkloadSummary.  Add histograms for failing jobs per site and per 
+    step.  Add a routine the determine missing lumis in a request.  Finally, improve
+    the unit test in the TaskArchiver for the WorkloadSummary.  Pull request #4298.
+  - Fix the WorkloadSummary unit tests.  Pull request #4304.
+  - Make sure that the status change time is an INT so that it doesn't cause problems
+    on Oracle.  Pull request #4301.
+  - Allow /store/hidata and /store/himc to be used as base LFNs when assigning
+    requests.  Pull requests #4300 and #4302.
+  - Add support for requests that read data via xrootd.  Pull request #4299.
+  - Allow the use of configs from the ConfigCache for DQM harvesting.  Pull request #4295.
+  - Allow the user to determine the config cache database to use when making request.
+    Add a handful of improvements to the ReqMgr Ops script.  Pull request #4293.
+  - Adds a real LogCollect fwjr to the TaskArchiver test and changes to support it better. 
+    Changes in the summary document.  Pull request #4291.
+  - Remove restriction of autoapprove on custodial subscriptions.  Pull request #4288.
+  - Fix the resource control script which had the pending and running slots swapped.
+    Pull request #4283.
+  - Check for null auth in the Workload Summary cuchapp and all it.  Pull request #4284.
+  - Propagate output dataset information to WMStats.  Pull request #4279. 
+  - Fix the resource control class to correctly insert job types.  Pull request #4277. 
+  - Check that files contains at least one good lumi before adding them to WMBS. Pull
+    request #4285.
+  - Make component sleeping more configurable.  Pull request #4246. 
+  - Add support for veryinf an adler32 checksum in the LCG module.  Pull request #4222. 
+  - Remove the auto increment check in the JobCreator as it caused more problems than it
+    solved.  Improve the ChangeState code to handle update conflicts as a more reasonable
+    work around.  Pull request #4147.
+  - Catch any exceptions that occur when attempting to overwrite a FWJR file.  This solves a 
+    problems where permissions may be set incorrectly on FWJR files.  Pull request #4164.
+
 0.9.29 to 0.9.30:
   - Fix unit tests broke by pull request #4270.  Pull request #4272.
 

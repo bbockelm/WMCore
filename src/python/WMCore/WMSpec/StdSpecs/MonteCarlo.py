@@ -85,7 +85,8 @@ class MonteCarloWorkloadFactory(StdBase):
                                               configDoc = self.configCacheID, splitAlgo = self.prodJobSplitAlgo,
                                               splitArgs = self.prodJobSplitArgs, configCacheUrl = self.configCacheUrl,
                                               seeding = self.seeding, totalEvents = self.totalEvents,
-                                              eventsPerLumi = self.eventsPerLumi)
+                                              eventsPerLumi = self.eventsPerLumi, timePerEvent = self.timePerEvent,
+                                              sizePerEvent = self.sizePerEvent, memoryReq = self.memory)
         self.addLogCollectTask(prodTask)
 
         # pile up support
@@ -97,6 +98,11 @@ class MonteCarloWorkloadFactory(StdBase):
             outputModuleInfo = outputMods[outputModuleName]
             self.addMergeTask(prodTask, self.prodJobSplitAlgo,
                               outputModuleName, lfn_counter = self.previousJobCount)
+
+        workload.setBlockCloseSettings(workload.getBlockCloseMaxWaitTime(),
+                                       workload.getBlockCloseMaxFiles(),
+                                       25000000,
+                                       workload.getBlockCloseMaxSize())
 
         return workload
 
@@ -137,7 +143,6 @@ class MonteCarloWorkloadFactory(StdBase):
         self.couchDBName = arguments["CouchDBName"]
         self.configCacheUrl = arguments.get("ConfigCacheUrl", None)
         
-
         # Optional arguments that default to something reasonable.
         self.dbsUrl = arguments.get("DbsUrl", "http://cmsdbsprod.cern.ch/cms_dbs_prod_global/servlet/DBSServlet")
         self.emulation = arguments.get("Emulation", False)

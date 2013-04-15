@@ -7,13 +7,10 @@ Base class with helper functions for standard WMSpec files.
 import logging
 
 from WMCore.WMSpec.WMWorkload import newWorkload
-from WMCore.WMSpec.WMStep import makeWMStep
-from WMCore.WMSpec.Steps.StepFactory import getStepTypeHelper
 
 from WMCore.Cache.WMConfigCache import ConfigCache, ConfigCacheException
-from WMCore.Lexicon import lfnBase, identifier
+from WMCore.Lexicon import lfnBase, identifier, procversion
 from WMCore.WMException import WMException
-from WMCore.Database.CMSCouch import CouchNotFoundError
 from WMCore.Services.Dashboard.DashboardReporter import DashboardReporter
 from WMCore.Configuration import ConfigSection
 
@@ -80,13 +77,14 @@ class StdBase(object):
         self.firstLumi = 1
         self.firstEvent = 1
         self.runNumber = 0
-        self.timePerEvent = 60
-        self.memory = 2000
-        self.sizePerEvent = 512
-        self.periodicHarvestingInterval = 0
+        self.timePerEvent = None
+        self.memory = None
+        self.sizePerEvent = None
+        self.periodicHarvestInterval = 0
         self.dqmUploadProxy = None
         self.dqmUploadUrl = None
         self.dqmSequences = None
+        self.dqmConfigCacheID = None
         self.procScenario = None
         self.enableHarvesting = True
         self.enableNewStageout = False
@@ -126,13 +124,14 @@ class StdBase(object):
         self.dashboardPort = arguments.get("DashboardPort", 8884)
         self.overrideCatalog = arguments.get("OverrideCatalog", None)
         self.runNumber = int(arguments.get("RunNumber", 0))
-        self.timePerEvent = int(arguments.get("TimePerEvent", 60))
-        self.memory = int(arguments.get("Memory", 2000))
-        self.sizePerEvent = int(arguments.get("SizePerEvent", 512))
-        self.periodicHarvestingInterval = int(arguments.get("PeriodicHarvest", 0))
+        self.timePerEvent = float(arguments.get("TimePerEvent", 12))
+        self.memory = float(arguments.get("Memory", 2300))
+        self.sizePerEvent = float(arguments.get("SizePerEvent", 512))
+        self.periodicHarvestInterval = int(arguments.get("PeriodicHarvestInterval", 0))
         self.dqmUploadProxy = arguments.get("DQMUploadProxy", None)
         self.dqmUploadUrl = arguments.get("DQMUploadUrl", "https://cmsweb.cern.ch/dqm/dev")
         self.dqmSequences = arguments.get("DqmSequences", [])
+        self.dqmConfigCacheID = arguments.get("DQMConfigCacheID", None)
         self.procScenario = arguments.get("ProcScenario", None)
         self.enableHarvesting = arguments.get("EnableHarvesting", True)
         self.enableNewStageout = arguments.get("EnableNewStageout", False)
@@ -273,6 +272,7 @@ class StdBase(object):
         workload.setEndPolicy("SingleShot")
         workload.setAcquisitionEra(acquisitionEras = self.acquisitionEra)
         workload.setProcessingVersion(processingVersions = self.processingVersion)
+        workload.setProcessingString(processingStrings = self.processingString)
         workload.setValidStatus(validStatus = self.validStatus)
         return workload
 
@@ -286,7 +286,8 @@ class StdBase(object):
                             owner_vorole = "DEFAULT", stepType = "CMSSW",
                             userSandbox = None, userFiles = [], primarySubType = None,
                             forceMerged = False, forceUnmerged = False,
-                            configCacheUrl = None):
+                            configCacheUrl = None, timePerEvent = None, memoryReq = None,
+                            sizePerEvent = None):
         """
         _setupProcessingTask_
 
@@ -322,8 +323,6 @@ class StdBase(object):
         procTaskLogArch.setNewStageoutOverride(self.enableNewStageout)
         
         procTask.applyTemplates()
-        procTask.setTaskPriority(self.priority)
-
 
         procTask.setTaskLogBaseLFN(self.unmergedLFNBase)
         procTask.setSiteWhitelist(self.siteWhitelist)
@@ -334,7 +333,13 @@ class StdBase(object):
             newSplitArgs[str(argName)] = splitArgs[argName]
 
         procTask.setSplittingAlgorithm(splitAlgo, **newSplitArgs)
+        procTask.setJobResourceInformation(timePerEvent = timePerEvent,
+                                           sizePerEvent = sizePerEvent,
+                                           memoryReq = memoryReq)
         procTask.setTaskType(taskType)
+        procTask.setProcessingVersion(self.processingVersion)
+        procTask.setAcquisitionEra(self.acquisitionEra)
+        procTask.setProcessingString(self.processingString)
 
         if taskType in ["Production", 'PrivateMC'] and totalEvents != None:
             procTask.addGenerator(seeding)
@@ -395,10 +400,8 @@ class StdBase(object):
             outputModules[outputModuleName] = outputModule
 
         if configDoc != None and configDoc != "":
-            if configCacheUrl:
-                procTaskCmsswHelper.setConfigCache(configCacheUrl, configDoc, couchDBName)
-            else:
-                procTaskCmsswHelper.setConfigCache(couchURL, configDoc, couchDBName)
+            url = configCacheUrl or couchURL
+            procTaskCmsswHelper.setConfigCache(url, configDoc, couchDBName)
         else:
             # delete dataset information from scenarioArgs
             if 'outputs' in scenarioArgs:
@@ -486,8 +489,11 @@ class StdBase(object):
             lfnBase(unmergedLFN)
             lfnBase(mergedLFN)
 
+        isTransient = True
+
         if forceMerged:
             unmergedLFN = mergedLFN
+            isTransient = False
         elif forceUnmerged:
             mergedLFN = unmergedLFN
 
@@ -499,7 +505,8 @@ class StdBase(object):
                                         dataTier = dataTier,
                                         filterName = filterName,
                                         lfnBase = unmergedLFN,
-                                        mergedLFNBase = mergedLFN)
+                                        mergedLFNBase = mergedLFN,
+                                        transient = isTransient)
 
         return {"primaryDataset": primaryDataset,
                 "dataTier": dataTier,
@@ -554,7 +561,6 @@ class StdBase(object):
 
         mergeTask.setTaskType("Merge")
         mergeTask.applyTemplates()
-        mergeTask.setTaskPriority(self.priority + 5)
 
         if parentTaskSplitting == "EventBased" and parentTask.taskType() != "Production":
             splitAlgo = "WMBSMergeBySize"
@@ -567,6 +573,8 @@ class StdBase(object):
         mergeTask.setInputReference(parentTaskCmssw, outputModule = parentOutputModuleName)
 
         mergeTaskCmsswHelper = mergeTaskCmssw.getTypeHelper()
+        mergeTaskStageHelper = mergeTaskStageOut.getTypeHelper()
+
         mergeTaskCmsswHelper.cmsswSetup(self.frameworkVersion, softwareEnvironment = "",
                                         scramArch = self.scramArch)
 
@@ -589,6 +597,8 @@ class StdBase(object):
         else:
             mergeTaskCmsswHelper.setDataProcessingConfig("do_not_use", "merge")
 
+        mergeTaskStageHelper.setMinMergeSize(0, 0)
+
         self.addOutputModule(mergeTask, "Merged",
                              primaryDataset = getattr(parentOutputModule, "primaryDataset"),
                              dataTier = getattr(parentOutputModule, "dataTier"),
@@ -599,7 +609,7 @@ class StdBase(object):
         if self.enableHarvesting and getattr(parentOutputModule, "dataTier") in ["DQMROOT", "DQM"]:
             self.addDQMHarvestTask(mergeTask, "Merged",
                                    uploadProxy = self.dqmUploadProxy,
-                                   periodic_harvest_interval= self.periodicHarvestingInterval,
+                                   periodic_harvest_interval= self.periodicHarvestInterval,
                                    doLogCollect = doLogCollect)
         return mergeTask
 
@@ -620,18 +630,24 @@ class StdBase(object):
         cleanupStep = cleanupTask.makeStep("cleanupUnmerged%s" % parentOutputModuleName)
         cleanupStep.setStepType("DeleteFiles")
         cleanupTask.applyTemplates()
-        cleanupTask.setTaskPriority(self.priority + 5)
         return
 
-    def addDQMHarvestTask(self, parentTask, parentOutputModuleName,
-                          uploadProxy = None, periodic_harvest_interval = 0,
+    def addDQMHarvestTask(self, parentTask, parentOutputModuleName, uploadProxy = None,
+                          periodic_harvest_interval = 0, periodic_harvest_sibling = False,
                           parentStepName = "cmsRun1", doLogCollect = True):
         """
         _addDQMHarvestTask_
 
         Create a DQM harvest task to harvest the files produces by the parent task.
         """
-        harvestTask = parentTask.addTask("%sDQMHarvest%s" % (parentTask.name(), parentOutputModuleName))
+        if periodic_harvest_interval:
+            harvestType = "Periodic"
+        else:
+            harvestType = "EndOfRun"
+
+        harvestTask = parentTask.addTask("%s%sDQMHarvest%s" % (parentTask.name(),
+                                                               harvestType,
+                                                               parentOutputModuleName))
         self.addDashboardMonitoring(harvestTask)
         harvestTaskCmssw = harvestTask.makeStep("cmsRun1")
         harvestTaskCmssw.setStepType("CMSSW")
@@ -643,11 +659,12 @@ class StdBase(object):
 
         harvestTask.setTaskLogBaseLFN(self.unmergedLFNBase)
         if doLogCollect:
-            self.addLogCollectTask(harvestTask, taskName = "%s%sDQMHarvestLogCollect" % (parentTask.name(), parentOutputModuleName))
+            self.addLogCollectTask(harvestTask, taskName = "%s%s%sDQMHarvestLogCollect" % (parentTask.name(),
+                                                                                           parentOutputModuleName,
+                                                                                           harvestType))
 
         harvestTask.setTaskType("Harvesting")
         harvestTask.applyTemplates()
-        harvestTask.setTaskPriority(self.priority + 5)
 
         harvestTaskCmsswHelper = harvestTaskCmssw.getTypeHelper()
         harvestTaskCmsswHelper.cmsswSetup(self.frameworkVersion, softwareEnvironment = "",
@@ -665,29 +682,44 @@ class StdBase(object):
         harvestTask.setInputReference(parentTaskCmssw, outputModule = parentOutputModuleName)
 
         harvestTask.setSplittingAlgorithm("Harvest",
-                                          periodic_harvest_interval = periodic_harvest_interval)
+                                          periodic_harvest_interval = periodic_harvest_interval,
+                                          periodic_harvest_sibling = periodic_harvest_sibling)
 
-        if getattr(parentOutputModule, "dataTier") == "DQMROOT":
-            harvestTaskCmsswHelper.setDataProcessingConfig(self.procScenario, "dqmHarvesting",
-                                                           globalTag = self.globalTag,
-                                                           datasetName = "/%s/%s/%s" % (getattr(parentOutputModule, "primaryDataset"),
-                                                                                        getattr(parentOutputModule, "processedDataset"),
-                                                                                        getattr(parentOutputModule, "dataTier")),
-                                                           runNumber = self.runNumber,
-                                                           dqmSeq = self.dqmSequences,
-                                                           newDQMIO = True)
+        datasetName = "/%s/%s/%s" % (getattr(parentOutputModule, "primaryDataset"),
+                                     getattr(parentOutputModule, "processedDataset"),
+                                     getattr(parentOutputModule, "dataTier"))
+
+        if self.dqmConfigCacheID is not None:
+            if getattr(self, "configCacheUrl", None) is not None:
+                harvestTaskCmsswHelper.setConfigCache(self.configCacheUrl, self.dqmConfigCacheID, self.couchDBName)
+            else:
+                harvestTaskCmsswHelper.setConfigCache(self.couchURL, self.dqmConfigCacheID, self.couchDBName)
+            harvestTaskCmsswHelper.setDatasetName(datasetName)
         else:
-            harvestTaskCmsswHelper.setDataProcessingConfig(self.procScenario, "dqmHarvesting",
-                                                           globalTag = self.globalTag,
-                                                           datasetName = "/%s/%s/%s" % (getattr(parentOutputModule, "primaryDataset"),
-                                                                                        getattr(parentOutputModule, "processedDataset"),
-                                                                                        getattr(parentOutputModule, "dataTier")),
-                                                           runNumber = self.runNumber,
-                                                           dqmSeq = self.dqmSequences)
+            if getattr(parentOutputModule, "dataTier") == "DQMROOT":
+                harvestTaskCmsswHelper.setDataProcessingConfig(self.procScenario, "dqmHarvesting",
+                                                               globalTag = self.globalTag,
+                                                               datasetName = datasetName,
+                                                               runNumber = self.runNumber,
+                                                               dqmSeq = self.dqmSequences,
+                                                               newDQMIO = True)
+            else:
+                harvestTaskCmsswHelper.setDataProcessingConfig(self.procScenario, "dqmHarvesting",
+                                                               globalTag = self.globalTag,
+                                                               datasetName = datasetName,
+                                                               runNumber = self.runNumber,
+                                                               dqmSeq = self.dqmSequences)
 
         harvestTaskUploadHelper = harvestTaskUpload.getTypeHelper()
         harvestTaskUploadHelper.setProxyFile(uploadProxy)
         harvestTaskUploadHelper.setServerURL(self.dqmUploadUrl)
+
+        # if this was a Periodic harvesting add another for EndOfRun
+        if periodic_harvest_interval:
+            self.addDQMHarvestTask(parentTask = parentTask, parentOutputModuleName = parentOutputModuleName, uploadProxy = uploadProxy,
+                                   periodic_harvest_interval = 0, periodic_harvest_sibling = True,
+                                   parentStepName = parentStepName, doLogCollect = doLogCollect)
+
         return
 
     def setupPileup(self, task, pileupConfig):
@@ -728,22 +760,7 @@ class StdBase(object):
         If something breaks, raise a WMSpecFactoryException.  A message
         in that exception will be transferred to an HTTP Error later on.
         """
-
-        #Check the workload for harvesting task, if there is a
-        #harvesting task then a self.procScenario must be defined
-        #Only if the harvesting is enable for this request
-        if self.enableHarvesting:
-            for task in workload.getAllTasks():
-                if task.taskType() == "Harvesting":
-                    for stepName in task.listAllStepNames():
-                        step = task.getStep(stepName)
-                        if step.stepType() != "CMSSW":
-                            continue
-                        cmsswHelper = step.getTypeHelper()
-                        if not cmsswHelper.getScenario():
-                            self.raiseValidationException(msg = "A DQM harvesting task was found, you must specify a scenario")
-
-        return
+        pass
 
     def factoryWorkloadConstruction(self, workloadName, arguments):
         """
@@ -772,17 +789,30 @@ class StdBase(object):
         """
 
         try:
-            processingVersion = int(schema.get("ProcessingVersion", 0))
-        except ValueError:
-            try:
-                processingVersion = int(float(schema.get("ProcessingVersion", 0)))
-            except ValueError:
-                self.raiseValidationException(msg = "Non-integer castable ProcessingVersion found")
+            procversion(str(schema.get("ProcessingVersion", 0)))
+        except AssertionError:
+            self.raiseValidationException(msg = "Non-integer castable ProcessingVersion found")
 
         performanceFields = ['TimePerEvent', 'Memory', 'SizePerEvent']
 
         for field in performanceFields:
             self._validatePerformanceField(field, schema)
+
+        if schema.get("EnableHarvesting", True):
+            # If enableHarvesting requested, then a few conditions must be met
+            if "DQMConfigCacheID" not in schema and "ProcScenario" not in schema:
+                self.raiseValidationException("Harvesting was requested, but no scenario or config cache ID was given")
+            if "DQMConfigCacheID" in schema:
+                if "ConfigCacheUrl" not in schema and "CouchURL" not in schema:
+                    self.raiseValidationException("Harvesting was requested, but no couch url was given")
+                if "CouchDBName" not in schema:
+                    self.raiseValidationException("Harvesting was requested, but no couchdb name was given")
+                couchUrl = schema.get("ConfigCacheUrl", None) or schema["CouchURL"]
+                self.validateConfigCacheExists(configID = schema["DQMConfigCacheID"],
+                                                    couchURL = couchUrl,
+                                                    couchDBName = schema["CouchDBName"])
+
+        return
 
     def _validatePerformanceField(self, field, schema):
         """

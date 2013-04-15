@@ -43,17 +43,15 @@ class DBSBlock:
 
 
         self.data      = {'dataset_conf_list':    [],   # List of dataset configurations
-                          'file_conf_list':       [],   # List of files, with the configuration for each
+                          'file_conf_list':       [],   # List of files, the configuration for each
                           'files':                [],   # List of file objects
                           'block':                {},   # Dict of block info
-                          'block_parent_list':    [],   # List of block parents
                           'processing_era':       {},   # Dict of processing era info
-                          'ds_parent_list':       [],   # List of parent datasets
                           'acquisition_era':      {},   # Dict of acquisition era information
                           'primds':               {},   # Dict of primary dataset info
                           'dataset':              {},   # Dict of processed dataset info
-                          'physics_group_name':   {},   # Physics Group Name
-                          'file_parent_list':     []}   # List of file parents
+                          'file_parent_list':     [],   # List of file parents
+                          'close_settings':       {}}   # Dict of info about block close settings
 
         self.files     = []
         self.encoder   = JSONRequests()
@@ -66,8 +64,19 @@ class DBSBlock:
 
         self.data['block']['block_name']       = name
         self.data['block']['origin_site_name'] = location
-        self.data['block']['open_for_writing'] = 0  # If we're sending a block, it better be open
+        self.data['block']['open_for_writing'] = 0
 
+        self.data['block']['create_by'] = "WMAgent"
+        self.data['block']['creation_date'] = int(time.time())
+        self.data['block']['block_size'] = 0
+        self.data['block']['file_count'] = 0
+        self.data['block']['block_events'] = 0
+
+        self.data['close_settings'] = {}
+        self.data['close_settings']['block_close_max_wait_time'] = None
+        self.data['close_settings']['block_close_max_events'] = None
+        self.data['close_settings']['block_close_max_size'] = None
+        self.data['close_settings']['block_close_max_files'] = None
         return
 
 
@@ -89,9 +98,6 @@ class DBSBlock:
 
         Add a DBSBufferFile object to our block
         """
-
-
-
         if dbsFile['id'] in [x['id'] for x in self.files]:
             msg =  "Duplicate file inserted into DBSBlock: %i\n" % (dbsFile['id'])
             msg += "Ignoring this file for now!\n"
@@ -102,13 +108,27 @@ class DBSBlock:
             logging.debug("First file: %s    Last file: %s" % (l[0], l[-1]))
             return
 
+        for setting in self.data['close_settings']:
+            if self.data['close_settings'][setting] is None:
+                self.data['close_settings'][setting] = dbsFile[setting]
+
         self.files.append(dbsFile)
+        self.data['block']['block_size'] += int(dbsFile['size'])
+        self.data['block']['file_count'] += 1
+        self.data['block']['block_events'] += int(dbsFile['events'])
+        
         # Assemble information for the file itself
         fileDict = {}
         fileDict['file_type']              =  'EDM'
         fileDict['logical_file_name']      = dbsFile['lfn']
         fileDict['file_size']              = dbsFile['size']
         fileDict['event_count']            = dbsFile['events']
+        fileDict['adler32'] = "NOTSET"
+        fileDict['md5'] = "NOTSET"
+        fileDict['last_modified_by'] = "WMAgent"
+        fileDict['last_modification_date'] = int(time.time())
+        fileDict['auto_cross_section'] = 0.0
+        
         # Do the checksums
         for cktype in dbsFile['checksums'].keys():
             cksum = dbsFile['checksums'][cktype]
@@ -198,14 +218,19 @@ class DBSBlock:
         self.data['ds_parent_list'].append({'parent_dataset': parent})
         return
 
-    def setProcessingVer(self, era):
+    def setProcessingVer(self, procVer):
         """
-        _setProcessingEra_
+        _setProcessingVer_
 
-        Set the block's processing era
+        Set the block's processing version.
         """
+        if procVer.count("-") == 1:
+            (junk, self.data["processing_era"]["processing_version"]) = procVer.split("-v")
+        else:
+            self.data["processing_era"]["processing_version"] = procVer
 
-        self.data['processing_era']['processing_version'] = era
+        self.data["processing_era"]["create_by"] = "WMAgent"
+        self.data["processing_era"]["description"] = ""
         return
 
     def setAcquisitionEra(self, era, date = 123456789):
@@ -214,7 +239,6 @@ class DBSBlock:
 
         Set the acquisition era for the block
         """
-
         self.data['acquisition_era']['acquisition_era_name'] = era
         self.data['acquisition_era']['start_date']           = date
         return
@@ -235,10 +259,7 @@ class DBSBlock:
 
         Check and see if the dataset has been properly set
         """
-
         return self.data['dataset'].get('dataset', False)
-
-
 
     def setDataset(self, datasetName, primaryType,
                    datasetType, physicsGroup = None, overwrite = False, valid = 1):
@@ -248,7 +269,6 @@ class DBSBlock:
         Set all the information concerning a single dataset, including
         the primary, processed and tier info
         """
-
         if self.hasDataset() and not overwrite:
             # Do nothing, we already have a dataset
             return
@@ -276,7 +296,8 @@ class DBSBlock:
         # Do the primary dataset
         self.data['primds']['primary_ds_name'] = primary
         self.data['primds']['primary_ds_type'] = primaryType
-
+        self.data['primds']['create_by'] = "WMAgent"
+        self.data['primds']['creation_date'] = int(time.time())
 
         # Do the processed
         self.data['dataset']['physics_group_name']  = physicsGroup
@@ -285,6 +306,11 @@ class DBSBlock:
         self.data['dataset']['dataset_access_type'] = datasetType
         self.data['dataset']['dataset']             = datasetName
 
+        # Add misc meta data.
+        self.data['dataset']['create_by'] = "WMAgent"
+        self.data['dataset']['last_modified_by'] = "WMAgent"
+        self.data['dataset']['creation_date'] = int(time.time())
+        self.data['dataset']['last_modification_date'] = int(time.time())
         return
 
 
@@ -324,13 +350,15 @@ class DBSBlock:
 
         Get size of block
         """
+        return self.data['block']['block_size']
 
-        size = 0
+    def getNumEvents(self):
+        """
+        _getNumEvents_
 
-        for x in self.files:
-            size += x.get('size', 0)
-
-        return size
+        Get the number of events in the block
+        """
+        return self.data['block']['block_events']
 
     def getTime(self):
         """
@@ -341,6 +369,37 @@ class DBSBlock:
 
         return time.time() - self.startTime
 
+    def getMaxBlockTime(self):
+        """
+        _getMaxBlockTime_
+
+        Return the max time that the block should stay open
+        """
+        return self.data['close_settings']['block_close_max_wait_time']
+
+    def getMaxBlockSize(self):
+        """
+        _getMaxBlockSize_
+
+        Return the max size allowed for the block
+        """
+        return self.data['close_settings']['block_close_max_size']
+
+    def getMaxBlockNumEvents(self):
+        """
+        _getMaxBlockNumEvents_
+
+        Return the max number of events allowed for the block
+        """
+        return self.data['close_settings']['block_close_max_events']
+
+    def getMaxBlockFiles(self):
+        """
+        _getMaxBlockFiles_
+
+        Return the max number of files allowed for the block
+        """
+        return self.data['close_settings']['block_close_max_files']
 
     def getName(self):
         """
@@ -383,5 +442,11 @@ class DBSBlock:
         self.startTime = blockInfo.get('creation_date')
         self.inBuff    = True
 
+        if 'status' in blockInfo.keys():
+            self.status = blockInfo['status']
+            del blockInfo['status']
+            
         for key in blockInfo.keys():
+            if key == "DatasetAlgo":
+                continue
             self.data['block'][key] = blockInfo.get(key)

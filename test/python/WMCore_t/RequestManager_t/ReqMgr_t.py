@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 """
 RequestManager unittest
 
@@ -54,7 +52,6 @@ class RequestManagerConfig(DefaultConfig):
         shutil.rmtree(self.UnitTests.views.active.rest.model.workloadCache)
     
     def setupRequestConfig(self):
-        import WMCore.RequestManager.RequestMaker.Processing.RecoRequest
         self.UnitTests.views.active.rest.workloadDBName = "test"
         self.UnitTests.views.active.rest.security_roles = []
         self._setReqMgrHost()
@@ -65,11 +62,9 @@ class RequestManagerConfig(DefaultConfig):
     def setupCouchDatabase(self, dbName):
         self.UnitTests.views.active.rest.configDBName   = dbName
         self.UnitTests.views.active.rest.workloadDBName = dbName
-        self.UnitTests.views.active.rest.clipboardDB    = dbName
         self.UnitTests.views.active.rest.wmstatDBName   = "%s_wmstats" % dbName
 
     def _setupAssign(self):
-        self.UnitTests.views.active.rest.opshold    = False
         self.UnitTests.views.active.rest.sitedb  = "https://cmsweb.cern.ch/sitedb/json/index/"
         
         
@@ -92,7 +87,7 @@ class ReqMgrTest(RESTBaseUnitTest):
         self.couchDBName = "reqmgr_t_0"
         RESTBaseUnitTest.setUp(self)
         self.testInit.setupCouch("%s" % self.couchDBName,
-                                 "GroupUser", "ConfigCache")
+                                 "GroupUser", "ConfigCache", "ReqMgr")
         self.testInit.setupCouch("%s_wmstats" % self.couchDBName,
                                  "WMStats")
         reqMgrHost = self.config.getServerUrl()
@@ -184,7 +179,7 @@ class ReqMgrTest(RESTBaseUnitTest):
         self.assertEqual(self.jsonSender.put(urllib.quote('team/White Sox'))[1], 200)
         self.assertTrue('White Sox' in self.jsonSender.get('team')[0])
 
-        # some foreign key stuff to dealwith
+        # some foreign key stuff to deal with
         schema = utils.getSchema()
         version = "version/" + schema["CMSSWVersion"]
         self.assertTrue(self.jsonSender.put(version)[1] == 200)
@@ -201,7 +196,7 @@ class ReqMgrTest(RESTBaseUnitTest):
         """
         schema = utils.getAndSetupSchema(self)
         schema['RequestNumEvents'] = 100
-        schema['RequestEventSize'] = 101
+        schema['SizePerEvent'] = 101
         self.doRequest(schema)
 
 
@@ -224,15 +219,9 @@ class ReqMgrTest(RESTBaseUnitTest):
         me = self.jsonSender.get('user/me')[0]
         self.assertTrue(requestName in me['requests'])
         self.assertEqual(self.jsonSender.put('request/%s?priority=5' % requestName)[1], 200)
-        self.assertEqual(self.jsonSender.post('user/me?priority=6')[1], 200)
-        self.assertEqual(self.jsonSender.post('group/PeopleLikeMe?priority=7')[1], 200)
 
-        # default priority of group and user of 1
         request = self.jsonSender.get('request/%s' % requestName)[0]
-        self.assertEqual(request['ReqMgrRequestBasePriority'], 5)
-        self.assertEqual(request['ReqMgrRequestorBasePriority'], 6)
-        self.assertEqual(request['ReqMgrGroupBasePriority'], 7)
-        self.assertEqual(request['RequestPriority'], 5+6+7)
+        self.assertEqual(request['RequestPriority'], 5)
 
         # Check LFN Bases
         self.assertEqual(request['UnmergedLFNBase'], '/store/unmerged')
@@ -243,7 +232,7 @@ class ReqMgrTest(RESTBaseUnitTest):
 
         # Check Num events
         self.assertEqual(request['RequestNumEvents'], 100)
-        self.assertEqual(request['RequestEventSize'], 101)
+        self.assertEqual(request['SizePerEvent'], 101)
 
         # only certain transitions allowed
         #self.assertEqual(self.jsonSender.put('request/%s?status=running' % requestName)[1], 400)
@@ -279,7 +268,7 @@ class ReqMgrTest(RESTBaseUnitTest):
         self.jsonSender.put('message/%s' % requestName, message)
         messages = self.jsonSender.get('message/%s' % requestName)
         #self.assertEqual(messages[0][0][0], message)
-        for status in ['running', 'completed']:
+        for status in ['running-open', 'running-closed', 'completed']:
             self.jsonSender.put('request/%s?status=%s' % (requestName, status))
 
         # campaign
@@ -306,26 +295,22 @@ class ReqMgrTest(RESTBaseUnitTest):
         """
         badName = 'ThereIsNoWayThisNameShouldExist'
 
-        # First, try to find a non-existant request
+        # First, try to find a non-existent request
         # This should throw a 404 error.
         # The request name should not be in it
         self.checkForError(cls = 'request', badName = badName, exitCode = 404,
                            message = 'Given requestName not found')
 
-        # Now look for non-existant user
+        # Now look for non-existent user
         self.checkForError(cls = 'user', badName = badName, exitCode = 404,
                            message = 'Cannot find user')
 
-        # Now try non-existant group
-        self.checkForError(cls = 'group', badName = badName, exitCode = 404,
-                           message = "Cannot find group/group priority")
-
-        # Now try non-existant campaign
+        # Now try non-existent campaign
         self.checkForError(cls = 'campaign', badName = badName, exitCode = 404,
                            message = "Cannot find campaign")
 
         # Now try invalid message
-        # This raises a requestName error becuase it searches for the request
+        # This raises a requestName error because it searches for the request
         self.checkForError(cls = 'message', badName = badName, exitCode = 404,
                            message = "Given requestName not found", testEmpty = False)
 
@@ -476,15 +461,13 @@ class ReqMgrTest(RESTBaseUnitTest):
 
         self.jsonSender.put(urllib.quote('assignment/%s/%s' % (teamName, requestName)))
         self.changeStatusAndCheck(requestName = requestName,
-                                  statusName  = 'ops-hold')
-        self.changeStatusAndCheck(requestName = requestName,
-                                  statusName  = 'assigned')
-        self.changeStatusAndCheck(requestName = requestName,
                                   statusName  = 'negotiating')
         self.changeStatusAndCheck(requestName = requestName,
                                   statusName  = 'acquired')
         self.changeStatusAndCheck(requestName = requestName,
-                                  statusName  = 'running')
+                                  statusName  = 'running-open')
+        self.changeStatusAndCheck(requestName = requestName,
+                                  statusName  = 'running-closed')
         self.changeStatusAndCheck(requestName = requestName,
                                   statusName  = 'completed')
         self.changeStatusAndCheck(requestName = requestName,
@@ -690,29 +673,46 @@ class ReqMgrTest(RESTBaseUnitTest):
                                                userName = userName,
                                                groupName = groupName,
                                                teamName = teamName)
-        result = self.jsonSender.put('request', schema)
+        result = self.jsonSender.put("request", schema)
         self.assertEqual(result[1], 200)
-        requestName = result[0]['RequestName']
-        # AcquisitionEra is returned here, but in fact on server is not stored until assign
-        self.assertTrue(schema["AcquisitionEra"], result[0]["AcquisitionEra"])
-        # get the original request (although the variable result shall have the same stuff in)
-        origRequest = self.jsonSender.get("request/%s" % requestName)
-        origRequest = origRequest[0]
-        self.assertEquals(origRequest["AcquisitionEra"], "None") # was not stored
+        requestName = result[0]["RequestName"]
+        acquisitionEra = result[0]["AcquisitionEra"]
+        self.assertTrue(schema["AcquisitionEra"], acquisitionEra)
+        # set some non-default priority
+        # when cloning a request which had some non default priority,
+        # the priority values were lost when creating a cloned request, the
+        # default values were lost. Change it here to specifically catch this case.
+        priority = 300
+        result = self.jsonSender.put("request/%s?priority=%s" % (requestName, priority))        
+        self.assertEqual(result[1], 200)
+        # get the original request from the server, although the variable result
+        # shall have the same stuff in
+        response = self.jsonSender.get("request/%s" % requestName)
+        origRequest = response[0]
+        self.assertEquals(origRequest["AcquisitionEra"], acquisitionEra)
+        # test that the priority was correctly set in the brand-new request
+        self.assertEquals(origRequest["RequestPriority"], priority)
         
         # test cloning not existing request
         self.assertRaises(HTTPException, self.jsonSender.put, "clone/%s" % "NotExistingRequestName")
+        # correct attempt to clone the request
         # this is the new request, it'll have different name
         result = self.jsonSender.put("clone/%s" % requestName)
-        cloned = self.jsonSender.get("request/%s" % result[0]["RequestName"])
-        clonedRequest = cloned[0]
+        # get the cloned request from the server
+        respose = self.jsonSender.get("request/%s" % result[0]["RequestName"])
+        clonedRequest = respose[0]
         # these request arguments shall differ in the cloned request:
-        #    RequestName, ReqMgrRequestID
-        # "RequestDate" and "timeStamp" will be the same in the test
-        toDiffer = ["RequestName", "ReqMgrRequestID", "RequestWorkflow"]
+        toDiffer = ["RequestName", "RequestStatus"]
         for differ in toDiffer:
             self.assertNotEqual(origRequest[differ], clonedRequest[differ])
-        toDiffer.extend(["RequestDate", "timeStamp"])
+        # check the desired status of the cloned request
+        self.assertEquals(clonedRequest["RequestStatus"], "assignment-approved",
+                          "Cloned request status should be 'assignment-approved', not '%s'." %
+                          clonedRequest["RequestStatus"])
+        # don't care about these two (they will likely be the same in the unittest
+        # since the brand new request injection as well as the cloning probably
+        # happen at roughly the same time)
+        toDiffer.extend(["RequestDate", "timeStamp", "RequestWorkflow"])
         for differ in toDiffer:
             del origRequest[differ]
             del clonedRequest[differ]
@@ -722,8 +722,23 @@ class ReqMgrTest(RESTBaseUnitTest):
             msg = ("Request values: original: %s: %s cloned: %s: %s differ" %
                    (k1, origRequest[k1], k2, clonedRequest[k2]))
             self.assertEqual(origRequest[k1], clonedRequest[k2], msg)
-        
-        
+            
+
+    def testK_CheckRequestFailsInjectionForbiddenInputArg(self):
+        myThread = threading.currentThread()
+        userName     = 'Taizong'
+        groupName    = 'Li'
+        teamName     = 'Tang'
+        schema       = utils.getAndSetupSchema(self,
+                                               userName = userName,
+                                               groupName = groupName,
+                                               teamName = teamName)
+        from WMCore.HTTPFrontEnd.RequestManager.ReqMgrRESTModel import deprecatedRequestArgs
+        for deprec in deprecatedRequestArgs:
+            schema = utils.getSchema(groupName=groupName, userName=userName)
+            schema[deprec] = "something"
+            self.assertRaises(HTTPException, self.jsonSender.put, "request", schema)
+            
 
 if __name__=='__main__':
     unittest.main()

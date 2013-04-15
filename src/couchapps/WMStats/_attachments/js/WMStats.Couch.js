@@ -2,12 +2,15 @@
  * Define Global values for couch db and couch db function
  * this has dependency on jquery.js and jquery.couch.js
  */
+WMStats.namespace("CouchBase")
 WMStats.namespace("Couch")
+WMStats.namespace("WorkloadSummaryCouch")
+WMStats.namespace("ReqMgrCouch")
 
-WMStats.Couch = (function(){
+WMStats.CouchBase = function(dbName, designName){
     // couchapp name
-    var _Design = WMStats.Globals.COUCHAPP_DESIGN;
-    var _couchDB = $.couch.db(WMStats.Globals.COUCHDB_NAME);
+    var _Design = designName;
+    var _couchDB = $.couch.db(dbName);
     var _config;
 
     function _combineOption(options, callback, ajaxOptions) {
@@ -16,7 +19,8 @@ WMStats.Couch = (function(){
         // {'beforeSend': .., 'complete': ...}
         var options = options || {};
         options.success = callback;
-        var ajaxOptions = ajaxOptions || WMStats.Globals.AJAX_LOADING_STATUS
+        //var ajaxOptions = ajaxOptions || WMStats.Globals.AJAX_LOADING_STATUS
+        //var ajaxOptions = ajaxOptions
         if (ajaxOptions) {
             for (var opt in ajaxOptions) {
                 options[opt] = ajaxOptions[opt];
@@ -47,9 +51,9 @@ WMStats.Couch = (function(){
     function view(name, options, callback, ajaxOptions){
         //make all the view stale options update_after
         var options = options || {};
-        if (options.stale != undefined) {
-                options.stale = "update_after"
-        }    
+        if (options.stale === undefined) {
+            options.stale = "update_after"
+        }
         return _couchDB.view(_Design +"/" + name, 
                              _combineOption(options, callback, ajaxOptions));
     }
@@ -57,6 +61,17 @@ WMStats.Couch = (function(){
     function allDocs(options, callback, ajaxOptions){
         return _couchDB.allDocs(_combineOption(options, callback, ajaxOptions));
     }
+    
+    function openDoc(docId, callback){
+        return _couchDB.openDoc(docId, _combineOption({}, callback)); 
+    }
 
-    return {'loadConfig': loadConfig, 'view': view, "allDocs": allDocs};
-})()
+    return {'loadConfig': loadConfig, 'view': view, "allDocs": allDocs,
+            'openDoc': openDoc};
+}
+
+WMStats.Couch = WMStats.CouchBase(WMStats.Globals.COUCHDB_NAME, WMStats.Globals.COUCHAPP_DESIGN);
+WMStats.WorkloadSummaryCouch = WMStats.CouchBase(WMStats.Globals.WORKLOAD_SUMMARY_COUCHDB_NAME,
+                                                 WMStats.Globals.WORKLOAD_SUMMARY_COUCHAPP_DESIGN);
+WMStats.ReqMgrCouch = WMStats.CouchBase(WMStats.Globals.REQMGR_COUCHDB_NAME,
+                                                 WMStats.Globals.REQMGR_SUMMARY_COUCHAPP_DESIGN);

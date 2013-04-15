@@ -10,7 +10,6 @@ set of jobs.
 Equivalent of a WorkflowSpec in the ProdSystem.
 """
 
-import os
 import os.path
 import time
 
@@ -440,6 +439,8 @@ class WMTaskHelper(TreeHelper):
           initial_lfn_counter
           merge_across_runs
           runWhitelist
+
+        Also preserve the performance section.
         """
         setACDCParams = {}
         for paramName in ["collectionName", "filesetName", "couchURL",
@@ -448,13 +449,17 @@ class WMTaskHelper(TreeHelper):
             if hasattr(self.data.input.splitting, paramName):
                 setACDCParams[paramName] = getattr(self.data.input.splitting,
                                                    paramName)
+        performanceConfig = getattr(self.data.input.splitting, "performance", None)
         
         delattr(self.data.input, "splitting")
         self.data.input.section_("splitting")
-        
+        self.data.input.splitting.section_("performance")
+
         setattr(self.data.input.splitting, "algorithm", algoName)
         self.setSplittingParameters(**params)
         self.setSplittingParameters(**setACDCParams)
+        if performanceConfig is not None:
+            self.data.input.splitting.performance = performanceConfig
         return
 
     def jobSplittingAlgorithm(self):
@@ -465,19 +470,48 @@ class WMTaskHelper(TreeHelper):
         """
         return getattr(self.data.input.splitting, "algorithm", None)
     
-    def jobSplittingParameters(self):
+    def jobSplittingParameters(self, performance = True):
         """
         _jobSplittingParameters_
-        
+
         Retrieve the job splitting parameters.  This will combine the job
         splitting parameters specified in the spec with the site white list
         and black list as those are passed to the job splitting code.
+        If required, also extract the performance parameters and pass them in the dict.
         """
         datadict = getattr(self.data.input, "splitting")
-        splittingParams = datadict.dictionary_()
+        if performance:
+            splittingParams = datadict.dictionary_whole_tree_()
+        else:
+            splittingParams = datadict.dictionary_()
+            if "performance" in splittingParams:
+                del splittingParams['performance']
         splittingParams["siteWhitelist"] = self.siteWhitelist()
         splittingParams["siteBlacklist"] = self.siteBlacklist()
+
+        if "runWhitelist" not in splittingParams.keys() and self.inputRunWhitelist() != None:
+            splittingParams["runWhitelist"] = self.inputRunWhitelist()
+        if "runBlacklist" not in splittingParams.keys() and self.inputRunBlacklist() != None:
+            splittingParams["runBlacklist"] = self.inputRunBlacklist()
+
         return splittingParams
+
+    def setJobResourceInformation(self, timePerEvent = None,
+                                  memoryReq = None, sizePerEvent = None):
+        """
+        _setJobResourceInformation_
+
+        Set the values to estimate the required computing resources for a job,
+        the three key values are main memory usage, time per processing unit (e.g. time per event) and
+        disk usage per processing unit (e.g. size per event).
+        """
+        performanceParams = getattr(self.data.input.splitting, "performance")
+        performanceParams.timePerEvent = timePerEvent \
+                        or getattr(performanceParams, "timePerEvent", None)
+        performanceParams.memoryRequirement = memoryReq \
+                        or getattr(performanceParams, "memoryRequirement", None)
+        performanceParams.sizePerEvent = sizePerEvent \
+                        or getattr(performanceParams, "sizePerEvent", None)
 
     def addGenerator(self, generatorName, **settings):
         """
@@ -810,6 +844,7 @@ class WMTaskHelper(TreeHelper):
 
     def setSubscriptionInformation(self, custodialSites = None, nonCustodialSites = None,
                                          autoApproveSites = None, priority = "Low",
+                                         custodialSubType = "Move",
                                          primaryDataset = None, dataTier = None):
         """
         _setSubscriptionsInformation_
@@ -822,6 +857,7 @@ class WMTaskHelper(TreeHelper):
         data.subscriptions.<outputModule>.nonCustodialSites
         data.subscriptions.<outputModule>.autoApproveSites
         data.subscriptions.<outputModule>.priority
+        data.subscriptions.<outputModule>.custodialSubType
 
         The filters arguments allow to define a dataTier and primaryDataset. Only datasets
         matching those values will be configured.
@@ -851,6 +887,7 @@ class WMTaskHelper(TreeHelper):
                 outputModuleSection.custodialSites = []
                 outputModuleSection.nonCustodialSites = []
                 outputModuleSection.autoApproveSites = []
+                outputModuleSection.custodialSubType = "Move"
                 outputModuleSection.priority = "Low"
 
             outputModuleSection = getattr(self.data.subscriptions, outputModule)
@@ -861,6 +898,7 @@ class WMTaskHelper(TreeHelper):
             if autoApproveSites:
                 outputModuleSection.autoApproveSites = autoApproveSites
             outputModuleSection.priority = priority
+            outputModuleSection.custodialSubType = custodialSubType
 
         return
 
@@ -890,7 +928,8 @@ class WMTaskHelper(TreeHelper):
         {<dataset> : {CustodialSites : [],
                       NonCustodialSites : [],
                       AutoApproveSites : [],
-                      Priority : Low
+                      Priority : "Low",
+                      CustodialSubType : "Move"
                      }
         }
         """
@@ -904,7 +943,9 @@ class WMTaskHelper(TreeHelper):
             subInformation[dataset] = {"CustodialSites" : outputModuleSection.custodialSites,
                                        "NonCustodialSites" : outputModuleSection.nonCustodialSites,
                                        "AutoApproveSites" : outputModuleSection.autoApproveSites,
-                                       "Priority" : outputModuleSection.priority}
+                                       "Priority" : outputModuleSection.priority,
+                                       # Specs assigned before HG1303 don't have the CustodialSubtype
+                                       "CustodialSubType" : getattr(outputModuleSection, "custodialSubType", "Move")}
         return subInformation
 
     def parentProcessingFlag(self):
@@ -1008,33 +1049,6 @@ class WMTaskHelper(TreeHelper):
         """
         self.data.logBaseLFN = logBaseLFN
         return
-
-    def setTaskPriority(self, priority):
-        """
-        _setTaskPriority_
-
-        Set the relative priority of this task
-        Determines run order in compatible batch systems.
-        Expects an integer.
-        Higher is better (will be given first shot at open slots)
-        """
-        if not type(priority) == int:
-            try:
-                priority = int(priority)
-            except ValueError:
-                # Can't really do anything if you don't give an int
-                return
-
-        self.data.taskPriority = priority
-        return
-
-    def getTaskPriority(self):
-        """
-        _getTaskPriority_
-
-        Get the priority level for the task
-        """
-        return getattr(self.data, 'taskPriority', None)
 
     def addNotification(self, target):
         """
@@ -1144,7 +1158,7 @@ class WMTaskHelper(TreeHelper):
         Set the task processing version
         """
 
-        self.data.parameters.processingVersion = procVer
+        self.data.parameters.processingVersion = int(procVer)
         return
 
     def getProcessingVersion(self):
@@ -1153,7 +1167,25 @@ class WMTaskHelper(TreeHelper):
 
         Get the task processing version
         """
-        return getattr(self.data.parameters, 'processingVersion', None)
+        return getattr(self.data.parameters, 'processingVersion', 0)
+
+    def setProcessingString(self, procString):
+        """
+        _setProcessingString_
+
+        Set the task processing string
+        """
+
+        self.data.parameters.processingString = procString
+        return
+
+    def getProcessingString(self):
+        """
+        _getProcessingString_
+
+        Get the task processing string
+        """
+        return getattr(self.data.parameters, 'processingString', None)
 
     def setAcquisitionEra(self, era):
         """
@@ -1183,7 +1215,28 @@ class WMTaskHelper(TreeHelper):
             return buildLumiMask(runs, lumis)
 
         return {}
-    
+
+    def setInputLocationFlag(self, flag = True):
+        """
+        _setInputLocationFlag_
+
+        Store a flag that indicates that the site
+        whitelist/blacklist should be used
+        as the location for the input data.
+        Trust it blindly and don't check PhEDEx.
+        """
+        self.data.input.trustSiteLists = True
+
+    def inputLocationFlag(self):
+        """
+        _getInputLocationFlag
+
+        Get the flag which tells
+        whether to use the site lists
+        as data location or not
+        """
+        return getattr(self.data.input, "trustSiteLists", False)
+
     def deleteChild(self, childName):
         """
         _deleteChild_
@@ -1216,8 +1269,10 @@ class WMTask(ConfigSectionTree):
         self.section_("subscriptions")
         self.notifications.targets = []
         self.input.sandbox = None
+        self.input.trustSiteLists = False
         self.input.section_("splitting")
         self.input.splitting.algorithm = None
+        self.input.splitting.section_("performance")
         self.constraints.section_("sites")
         self.constraints.sites.whitelist = []
         self.constraints.sites.blacklist = []

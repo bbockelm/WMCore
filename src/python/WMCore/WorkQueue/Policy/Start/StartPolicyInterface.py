@@ -9,6 +9,7 @@ import types
 
 from WMCore.WorkQueue.Policy.PolicyInterface import PolicyInterface
 from WMCore.WorkQueue.DataStructs.WorkQueueElement import WorkQueueElement
+from WMCore.WorkQueue.WorkQueueUtils import sitesFromStorageEelements
 #from WMCore.WorkQueue.DataStructs.CouchWorkQueueElement import CouchWorkQueueElement as WorkQueueElement
 from WMCore.WMException import WMException
 from WMCore.WorkQueue.WorkQueueExceptions import WorkQueueWMSpecError, WorkQueueNoWorkError
@@ -29,6 +30,8 @@ class StartPolicyInterface(PolicyInterface):
         self.data = {}
         self.lumi = None
         self.couchdb = None
+        self.rejectedWork = [] # List of inputs that were rejected
+        self.pileupData = {}
 
     def split(self):
         """Apply policy to spec"""
@@ -82,6 +85,15 @@ class StartPolicyInterface(PolicyInterface):
             error = WorkQueueWMSpecError(self.wmspec, "Dataset validation error: %s" % str(ex))
             raise error
 
+        # if pileup is found, check that they are valid datasets
+        try:
+            if self.wmspec.listPileupDatasets():
+                for dataset in self.wmspec.listPileupDatasets():
+                    Lexicon.dataset(dataset)
+        except Exception, ex: # can throw many errors e.g. AttributeError, AssertionError etc.
+            error = WorkQueueWMSpecError(self.wmspec, "Pileup dataset validation error: %s" % str(ex))
+            raise error
+
     def newQueueElement(self, **args):
         args.setdefault('Status', 'Available')
         args.setdefault('WMSpec', self.wmspec)
@@ -93,6 +105,7 @@ class StartPolicyInterface(PolicyInterface):
         args.setdefault('SiteBlacklist', self.initialTask.siteBlacklist())
         args.setdefault('EndPolicy', self.wmspec.endPolicyParameters())
         args.setdefault('Priority', self.wmspec.priority())
+        args.setdefault('PileupData', self.pileupData)
         if not args['Priority']:
             args['Priority'] = 0
         ele = WorkQueueElement(**args)
@@ -114,6 +127,9 @@ class StartPolicyInterface(PolicyInterface):
         self.mask = mask
         self.validate()
         try:
+            pileupDatasets = self.wmspec.listPileupDatasets()
+            if pileupDatasets:
+                self.pileupData = self.getDatasetLocations(pileupDatasets)
             self.split()
         # For known exceptions raise custom error that will fail the workflow.
         except DbsConfigurationError, ex:
@@ -129,7 +145,7 @@ class StartPolicyInterface(PolicyInterface):
             # DbsConnectionError: Database exception,Invalid parameters thrown by Summary api
             if 'DbsBadRequest' in str(ex) or 'Invalid parameters' in str(ex):
                 data = task.data.input.pythonise_() if task.data.input else 'None'
-                msg = """data: %s: mask %s. %s""" % (str(data), str(mask), str(ex))
+                msg = """data: %s, mask: %s, pileup: %s. %s""" % (str(data), str(mask), str(pileupDatasets), str(ex))
                 error = WorkQueueNoWorkError(self.wmspec, msg)
                 raise error
             raise # propagate other dbs errors
@@ -140,10 +156,38 @@ class StartPolicyInterface(PolicyInterface):
             msg = """data: %s, mask: %s.""" % (str(data), str(mask))
             error = WorkQueueNoWorkError(self.wmspec, msg)
             raise error
-        return self.workQueueElements
+        return self.workQueueElements, self.rejectedWork
 
     def dbs(self):
         """Get DBSReader"""
         from WMCore.WorkQueue.WorkQueueUtils import get_dbs
         dbs_url = self.initialTask.dbsUrl()
         return get_dbs(dbs_url)
+
+    @staticmethod
+    def supportsWorkAddition():
+        """Indicates if a given policy supports addition of new work"""
+        return False
+
+    def modifyPolicyForWorkAddition(self, inboxElement):
+        """Set modifiers to the policy based on the inboxElement information so that after a splitting pass
+        with this policy strictly new work is returned, the inbox element must have information
+        about already existing work"""
+        raise NotImplementedError("This can't be called on a base StartPolicyInterface object")
+
+    def newDataAvailable(self, task, inbound):
+        """
+            Returns True if there is data in the future could be included as an element
+            for the inbound parent. However it doesn't guarantee that the new data
+            will be included if the inbound element is split (i.e. the new data could be open blocks for the Block policy).
+        """
+        raise NotImplementedError("This can't be called on a base StartPolicyInterface object")
+
+    def getDatasetLocations(self, datasets):
+        """Returns a dictionary with the location of the datasets according to DBS"""
+        dbs = self.dbs()
+        result = {}
+        for datasetPath in datasets:
+            locations = sitesFromStorageEelements(dbs.listDatasetLocation(datasetPath))
+            result[datasetPath] = locations
+        return result

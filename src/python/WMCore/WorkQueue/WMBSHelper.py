@@ -32,6 +32,7 @@ from WMCore.JobStateMachine.ChangeState import ChangeState
 
 from WMCore.BossAir.BossAirAPI    import BossAirAPI, BossAirException
 
+from WMCore.JobSplitting.LumiBased import isGoodLumi
 
 def wmbsSubscriptionStatus(logger, dbi, conn, transaction):
     """Function to return status of wmbs subscriptions
@@ -178,6 +179,7 @@ class WMBSHelper(WMConnectionBase):
 
         self.topLevelFileset = None
         self.topLevelSubscription = None
+        self.topLevelTaskDBSBufferId = None
 
         self.mergeOutputMapping = {}
 
@@ -390,6 +392,8 @@ class WMBSHelper(WMConnectionBase):
         self.createTopLevelFileset()
         sub = self.createSubscription(self.topLevelTask, self.topLevelFileset)
 
+        self._createWorkflowsInDBSBuffer()
+
         if block != None:
             logging.info('"%s" Injecting block %s (%d files) into wmbs' % (self.wmSpec.name(),
                                                                            self.block,
@@ -445,6 +449,21 @@ class WMBSHelper(WMConnectionBase):
         """
         return self.mergeOutputMapping
 
+    def _createWorkflowsInDBSBuffer(self):
+        """
+        _createWorkflowsInDBSBuffer_
+
+        Register workflow information and settings in dbsbuffer for all
+        tasks that will potentially produce any output in this spec.
+        """
+
+        for task in self.wmSpec.listOutputProducingTasks():
+            workflow_id = self.dbsInsertWorkflow.execute(self.wmSpec.name(), task,
+                                                         self.wmSpec.getBlockCloseMaxWaitTime(), self.wmSpec.getBlockCloseMaxFiles(),
+                                                         self.wmSpec.getBlockCloseMaxEvents(), self.wmSpec.getBlockCloseMaxSize(),
+                                                         conn = self.getDBConn(), transaction = self.existingTransaction())
+            if task == self.topLevelTask.getPathName():
+                self.topLevelTaskDBSBufferId = workflow_id
 
     def _createFilesInDBSBuffer(self):
         """
@@ -469,10 +488,6 @@ class WMBSHelper(WMConnectionBase):
         if self.insertedBogusDataset  == -1:
             self.insertedBogusDataset = self.dbsFilesToCreate[0].insertDatasetAlgo()
 
-        # add workflow
-        workflow_id = self.dbsInsertWorkflow.execute(self.wmSpec.name(), self.topLevelTask.getPathName(),
-                                                     conn = self.getDBConn(), transaction = self.existingTransaction())
-
         for dbsFile in self.dbsFilesToCreate:
             # Append a tuple in the format specified by DBSBufferFiles.Add
             # Also run insertDatasetAlgo
@@ -482,7 +497,7 @@ class WMBSHelper(WMConnectionBase):
 
             newTuple = (lfn, dbsFile['size'],
                         dbsFile['events'], self.insertedBogusDataset,
-                        dbsFile['status'], workflow_id)
+                        dbsFile['status'], self.topLevelTaskDBSBufferId)
 
             if not newTuple in dbsFileTuples:
                 dbsFileTuples.append(newTuple)
@@ -529,7 +544,6 @@ class WMBSHelper(WMConnectionBase):
             self.dbsSetChecksum.execute(bulkList = dbsCksumBinds,
                                         conn = self.getDBConn(),
                                         transaction = self.existingTransaction())
-
 
         # Now that we've created those files, clear the list
         self.dbsFilesToCreate = []
@@ -667,8 +681,8 @@ class WMBSHelper(WMConnectionBase):
             if type(f) == type("") or not f.has_key("LumiList"):
                 results.append(f)
                 continue
+            runs = set([x['RunNumber'] for x in f['LumiList']])
             if runWhiteList or runBlackList:
-                runs = set([x['RunNumber'] for x in f['LumiList']])
                 # apply blacklist
                 runs = runs.difference(runBlackList)
                 # if whitelist only accept listed runs
@@ -677,5 +691,16 @@ class WMBSHelper(WMConnectionBase):
                 # any runs left are ones we will run on, if none ignore file
                 if not runs:
                     continue
+            #if we have a lumi mask we have to check that at least one lumi in the file is valid
+            hasGoodLumi = False
+            for lumi in f['LumiList']:
+                #consider the runs after applying the run white/black lists
+                if lumi['RunNumber'] in runs and \
+                    isGoodLumi(self.topLevelTask.getLumiMask(), lumi['RunNumber'], lumi['LumiSectionNumber']):
+                        hasGoodLumi = True
+                        break
+            #if no good lumi is found continue
+            if not hasGoodLumi:
+                continue
             results.append(f)
         return results

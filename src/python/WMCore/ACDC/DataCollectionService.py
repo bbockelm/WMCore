@@ -128,6 +128,40 @@ class DataCollectionService(CouchService):
         return chunks
 
     @CouchUtils.connectToCouch
+    def singleChunkFileset(self, collectionName, filesetName,
+                           user = "cmsdataops", group = "cmsdataops"):
+        """
+        _singleChunkFileset_
+
+        Put all of the fileset in a given collection/task into a single chunk.  This
+        will return a dictionary that contains the offset into the
+        fileset and a summary of files/events/lumis that are in the fileset
+        chunk.
+        """
+        results = self.couchdb.loadView("ACDC", "owner_coll_fileset_metadata",
+                                        {"startkey": [group, user,
+                                                      collectionName, filesetName],
+                                         "endkey": [group, user,
+                                                    collectionName, filesetName, {}]}, [])
+
+        locations = set()
+        numFilesInBlock = 0
+        numLumisInBlock = 0
+        numEventsInBlock = 0
+
+        for row in results["rows"]:
+            locationsInFile = row["key"][4]
+            locations |= set(locationsInFile)
+
+            numFilesInBlock += 1
+            numLumisInBlock += row["value"]["lumis"]
+            numEventsInBlock += row["value"]["events"]
+
+        return {"offset": 0, "files": numFilesInBlock,
+                "events": numEventsInBlock, "lumis": numLumisInBlock,
+                "locations": locations}
+
+    @CouchUtils.connectToCouch
     def getChunkInfo(self, collectionName, filesetName, chunkOffset, chunkSize,
                      user = "cmsdataops", group = "cmsdataops"):
         """
@@ -192,6 +226,33 @@ class DataCollectionService(CouchService):
             chunkFiles.append(newFile)
 
         return chunkFiles
+
+    @CouchUtils.connectToCouch
+    def getProductionACDCInfo(self, collectionID, taskName, user = "cmsdataops",
+                        group = "cmsdataops"):
+        """
+        _getFileInfo_
+
+        Query ACDC for all of the files in the given collection and task.
+        Return an entry for each file with lumis and event info.
+        Format is:
+        [{'lfn' : 'someLfn',
+          'runs' : { run0 : [lumi0,lumi1], },
+          'events' :}]
+        """
+        results = self.couchdb.loadView("ACDC", "owner_coll_fileset_files",
+                                        {"startkey": [group, user,
+                                                      collectionID, taskName],
+                                         "endkey": [group, user,
+                                                    collectionID, taskName, {}]}, [])
+        acdcInfo = []
+        for result in results["rows"]:
+            fileInfo = {"lfn" : result["value"]["lfn"],
+                        "first_event" : result["value"]["first_event"],
+                        "lumis" : result["value"]["runs"][0]["lumis"],
+                        "events" : result["value"]["events"]}
+            acdcInfo.append(fileInfo)
+        return acdcInfo
 
     @CouchUtils.connectToCouch
     def getLumiWhitelist(self, collectionID, taskName, user = "cmsdataops",

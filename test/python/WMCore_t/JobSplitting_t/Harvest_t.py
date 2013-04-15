@@ -59,7 +59,8 @@ class HarvestTest(unittest.TestCase):
 
         myResourceControl = ResourceControl()
         myResourceControl.insertSite("SomeSite", 10, 20, "SomeSE", "SomeCE")
-        myResourceControl.insertSite("SomeSite2", 10, 20, "SomeSE2", "SomeCE2")
+        myResourceControl.insertSite("SomeSite", 10, 20, "SomeSE2", "SomeCE")
+        myResourceControl.insertSite("SomeSite2", 10, 20, "SomeSE3", "SomeCE2")
 
         self.fileset1 = Fileset(name = "TestFileset1")
         for file in range(11):
@@ -239,7 +240,7 @@ class HarvestTest(unittest.TestCase):
         for file in range(50,56):
             newFile = File("/some/file/name%d" % file, size = 1000, events = 100)
             newFile.addRun(Run(1,*[1]))
-            newFile.setLocation('SomeSE2')
+            newFile.setLocation('SomeSE3')
             self.fileset1.addFile(newFile)
         self.fileset1.commit()
 
@@ -254,22 +255,22 @@ class HarvestTest(unittest.TestCase):
         firstJobLocation = jobGroups[0].getJobs()[0].getFileLocations()[0]
         secondJobLocation = jobGroups[0].getJobs()[1].getFileLocations()[0]
 
-        self.assertEqual(firstJobLocation, 'SomeSite2', "First job location is not SomeSite")
-        self.assertEqual(secondJobLocation, 'SomeSite', "Second job location is not SomeSite2")
+        self.assertEqual(firstJobLocation, 'SomeSite', "First job location is not SomeSite")
+        self.assertEqual(secondJobLocation, 'SomeSite2', "Second job location is not SomeSite2")
 
         self.finishJobs(jobGroups)
 
         for file in range(60,65):
             newFile = File("/some/file/name%d" % file, size = 1000, events = 100)
             newFile.addRun(Run(2,*[2]))
-            newFile.setLocation('SomeSE2')
+            newFile.setLocation('SomeSE3')
             self.fileset1.addFile(newFile)
         self.fileset1.commit()
 
         for file in range(70,75):
             newFile = File("/some/file/name%d" % file, size = 1000, events = 100)
             newFile.addRun(Run(3,*[3]))
-            newFile.setLocation('SomeSE2')
+            newFile.setLocation('SomeSE3')
             self.fileset1.addFile(newFile)
         self.fileset1.commit()
 
@@ -280,10 +281,10 @@ class HarvestTest(unittest.TestCase):
 
         # This is one of the most "complicated" tests so worth to comment, 4 jobs should be created
         # 1 - all previous files from SomeSE and run = 1 (a lot, like ~45)
-        # 2 - Few files from SomeSE2, Run = 1
-        # 3 - Few files from SomeSE2, Run = 2
-        # 4 - Few files from SomeSE2, Run = 3
-        self.assertEqual(len(jobGroups[0].getJobs()), 4 , "We didn't get 4 jobs for adding 2 different runs to SomeSE2")
+        # 2 - Few files from SomeSE3, Run = 1
+        # 3 - Few files from SomeSE3, Run = 2
+        # 4 - Few files from SomeSE3, Run = 3
+        self.assertEqual(len(jobGroups[0].getJobs()), 4 , "We didn't get 4 jobs for adding 2 different runs to SomeSE3")
 
         return
 
@@ -306,7 +307,7 @@ class HarvestTest(unittest.TestCase):
         newFile = File("/some/file/test2", size = 1000, events = 100)
         newFile.addRun(Run(1,*[2,8]))
         newFile.addRun(Run(2,*[3,8]))
-        newFile.setLocation('SomeSE2')
+        newFile.setLocation('SomeSE3')
         multipleFilesFileset.addFile(newFile)
         multipleFilesFileset.create()
 
@@ -341,7 +342,7 @@ class HarvestTest(unittest.TestCase):
 
         newFile = File("/some/file/test3", size = 1000, events = 100)
         newFile.addRun(Run(1,*range(9,15)))
-        newFile.setLocation('SomeSE2')
+        newFile.setLocation('SomeSE3')
         multipleFilesFileset.addFile(newFile)
         multipleFilesFileset.commit()
 
@@ -360,10 +361,28 @@ class HarvestTest(unittest.TestCase):
             for lumiPair in runs[run]:
                 self.assertTrue(lumiPair in possibleLumiPairs[run], "Strange lumi pair in the job mask")
 
-        self.finishJobs(jobGroups, harvestSub)
+        harvestingWorkflowSib = Workflow(spec = "spec.xml",
+                                         owner = "hufnagel",
+                                         name = "TestWorkflowSib",
+                                         task="TestSib")
+        harvestingWorkflowSib.create()
+
+        harvestSubSib  = Subscription(fileset = multipleFilesFileset,
+                                      workflow = harvestingWorkflowSib,
+                                      split_algo = "Harvest",
+                                      type = "Harvesting")
+        harvestSubSib.create()
+
+        jobFactorySib = self.splitterFactory(package = "WMCore.WMBS", subscription = harvestSubSib)
+
         multipleFilesFileset.markOpen(False)
 
-        jobGroups = jobFactory(periodic_harvest_interval = 2)
+        jobGroups = jobFactorySib(periodic_harvest_sibling = True)
+        self.assertEqual(len(jobGroups), 0, "A single job group was created")
+                
+        self.finishJobs(jobGroups, harvestSub)
+
+        jobGroups = jobFactorySib(periodic_harvest_sibling = True)
         self.assertEqual(len(jobGroups), 1, "A single job group was not created")
         self.assertEqual(len(jobGroups[0].getJobs()), 4, "Four jobs were not created")
 

@@ -77,6 +77,7 @@ class PhEDExInjectorSubscriber(BaseWorkerThread):
         self.dbsUrl = config.DBSInterface.globalDBSUrl
         self.group = getattr(config.PhEDExInjector, "group", "DataOps")
         self.safeMode = getattr(config.PhEDExInjector, "safeOperationMode", False)
+        self.replicaOnly = getattr(config.PhEDExInjector, "replicaOnly", False)
 
         # Subscribed state in the DBSBuffer table for datasets
         self.terminalSubscriptionState = 1
@@ -209,12 +210,18 @@ class PhEDExInjectorSubscriber(BaseWorkerThread):
             for site in subInfo["CustodialSites"]:
                 if site not in siteMap:
                     siteMap[site] = {}
+                autoApprove = False
+                if site in subInfo["AutoApproveSites"]:
+                    autoApprove = True
                 if self.safeMode and dataset not in partiallySubscribedSet:
-                    tupleKey = (subInfo["Priority"], True, False, False)
+                    tupleKey = (subInfo["Priority"], True, autoApprove, False)
                 else:
-                    tupleKey = (subInfo["Priority"], True, False, True)
+                    tupleKey = (subInfo["Priority"], True, autoApprove, True)
                 if tupleKey not in siteMap[site]:
                     siteMap[site][tupleKey] = []
+                # Subscriptions are sorted by options, defined by tupleKey
+                # The tuple key has 3 or 4 entries in this order
+                # Priority, Custodial, Auto approve, Move (True) or Replica (False)
                 siteMap[site][tupleKey].append(dataset)
 
             # If we are in safe mode and this is a partially subscribed dataset,
@@ -231,6 +238,8 @@ class PhEDExInjectorSubscriber(BaseWorkerThread):
                 autoApprove = False
                 if site in subInfo["AutoApproveSites"]:
                     autoApprove = True
+                # Non-custodial is never move, so this tuple has only 3 entries
+                # TODO: Change tuples to frozensets for clarity
                 tupleKey = (subInfo["Priority"], False, autoApprove)
                 if tupleKey not in siteMap[site]:
                     siteMap[site][tupleKey] = []
@@ -251,7 +260,9 @@ class PhEDExInjectorSubscriber(BaseWorkerThread):
             for subscriptionFlavor in siteMap[site]:
                 datasets = siteMap[site][subscriptionFlavor]
                 # Check that the site is valid
+                isMSS = False
                 if "MSS" in self.cmsToPhedexMap[site]:
+                    isMSS = True
                     phedexNode = self.cmsToPhedexMap[site]["MSS"]
                 else:
                     phedexNode = self.cmsToPhedexMap[site]["Disk"]
@@ -259,13 +270,17 @@ class PhEDExInjectorSubscriber(BaseWorkerThread):
                 options = {"custodial" : "n", "requestOnly" : "y",
                            "priority" : subscriptionFlavor[0].lower(),
                            "move" : "n"}
-                if subscriptionFlavor[1]:
+                if subscriptionFlavor[1] and isMSS:
+                    # Custodial subscriptions are only allowed in MSS nodes
+                    # If custodial is requested on Non-MSS it fallsback to a non-custodial subscription
                     options["custodial"] = "y"
-                    if subscriptionFlavor[3]:
+                    if subscriptionFlavor[3] and not self.replicaOnly:
                         options["move"] = "y"
                 if subscriptionFlavor[2]:
                     options["requestOnly"] = "n"
-
+                logging.info("Request options: Custodial - %s, Move - %s, Request Only - %s" % (options["custodial"].upper(),
+                                                                                                options["move"].upper(),
+                                                                                                options["requestOnly"].upper()))
                 newSubscription = PhEDExSubscription(datasets, phedexNode, self.group,
                                                      **options)
 

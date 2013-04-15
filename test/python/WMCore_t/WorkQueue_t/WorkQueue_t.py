@@ -18,6 +18,8 @@ from WMCore.Services.WorkQueue.WorkQueue import WorkQueue as WorkQueueService
 
 from WMCore.WMSpec.StdSpecs.ReReco import rerecoWorkload as rerecoWMSpec, \
                                           getTestArguments as getRerecoArgs
+from WMCore.WMSpec.StdSpecs.ReDigi import reDigiWorkload as redigiWMSpec, \
+                                            getTestArguments as getRedigiArgs
 from WMQuality.Emulators.WMSpecGenerator.Samples.TestMonteCarloWorkload \
     import monteCarloWorkload, getMCArgs
 
@@ -29,6 +31,7 @@ from WMCore.DAOFactory import DAOFactory
 from WMQuality.Emulators import EmulatorSetup
 
 from WMCore_t.WorkQueue_t.WorkQueueTestCase import WorkQueueTestCase
+from WMCore_t.WMSpec_t.StdSpecs_t.ReDigi_t import injectReDigiConfigs
 from WMCore_t.WMSpec_t.samples.MultiTaskProductionWorkload \
                                 import workload as MultiTaskProductionWorkload
 from WMCore.Services.EmulatorSwitch import EmulatorHelper
@@ -47,10 +50,18 @@ rerecoArgs = getRerecoArgs()
 mcArgs = getMCArgs()
 parentProcArgs = getRerecoArgs()
 parentProcArgs.update(IncludeParents = "True")
+openRunningProcArgs = getRerecoArgs()
+openRunningProcArgs.update(OpenRunningTimeout = 10)
+redigiArgs = getRedigiArgs()
+
 
 def rerecoWorkload(workloadName, arguments):
     wmspec = rerecoWMSpec(workloadName, arguments)
     #wmspec.setStartPolicy("DatasetBlock")
+    return wmspec
+
+def redigiWorkload(workloadName, arguments):
+    wmspec = redigiWMSpec(workloadName, arguments)
     return wmspec
 
 def getFirstTask(wmspec):
@@ -120,6 +131,17 @@ class WorkQueueTest(WorkQueueTestCase):
                                                     'testWhitelist.spec'))
         getFirstTask(self.whitelistSpec).data.constraints.sites.whitelist = ['T2_XX_SiteB']
         self.whitelistSpec.save(self.whitelistSpec.specUrl())
+
+        # ReReco spec with delay for running open
+        self.openRunningSpec = rerecoWorkload('openRunningSpec', openRunningProcArgs)
+        self.openRunningSpec.setSpecUrl(os.path.join(self.workDir,
+                                                     'testOpenRunningSpec.spec'))
+        self.openRunningSpec.save(self.openRunningSpec.specUrl())
+
+        # Redigi spec with pile-up
+        # Needs special configCache setup
+        self.createRedigiSpec()
+
         # setup Mock DBS and PhEDEx
         inputDataset = getFirstTask(self.processingSpec).inputDataset()
         self.dataset = "/%s/%s/%s" % (inputDataset.primary,
@@ -152,6 +174,7 @@ class WorkQueueTest(WorkQueueTestCase):
         self.localQueue = localQueue(DbName = self.localQDB,
                                      InboxDbName = self.localQInboxDB,
                                      ParentQueueCouchUrl = globalCouchUrl,
+                                     ParentQueueInboxCouchDBName = self.globalQInboxDB,
                                      JobDumpConfig = jobCouchConfig,
                                      BossAirConfig = bossAirConfig,
                                      CacheDir = self.workDir)
@@ -159,6 +182,7 @@ class WorkQueueTest(WorkQueueTestCase):
         self.localQueue2 = localQueue(DbName = self.localQDB2,
                                       InboxDbName = self.localQInboxDB2,
                                       ParentQueueCouchUrl = globalCouchUrl,
+                                      ParentQueueInboxCouchDBName = self.globalQInboxDB,
                                       JobDumpConfig = jobCouchConfig,
                                       BossAirConfig = bossAirConfig,
                                       CacheDir = self.workDir)
@@ -181,7 +205,8 @@ class WorkQueueTest(WorkQueueTestCase):
 
         # create relevant sites in wmbs
         rc = ResourceControl()
-        for site, se in self.queue.SiteDB.mapping.items():
+        site_se_mapping = {'T2_XX_SiteA' : 'a.example.com', 'T2_XX_SiteB' : 'b.example.com'}
+        for site, se in site_se_mapping.iteritems():
             rc.insertSite(site, 100, 200, se, cmsName = site)
             daofactory = DAOFactory(package = "WMCore.WMBS",
                                     logger = threading.currentThread().logger,
@@ -197,6 +222,22 @@ class WorkQueueTest(WorkQueueTestCase):
         EmulatorSetup.deleteConfig(self.configFile)
         EmulatorHelper.resetEmulators()
 
+
+    def createRedigiSpec(self):
+        """
+        _createRedigiSpec_
+
+        Create a bogus redigi spec, with configs and all the shiny things
+        """
+        configs = injectReDigiConfigs(self.configCacheDBInstance)
+        redigiArgs["CouchDBName"] = self.configCacheDB
+        redigiArgs["StepOneConfigCacheID"] = configs[0]
+        redigiArgs["StepTwoConfigCacheID"] = configs[1]
+        redigiArgs["StepThreeConfigCacheID"] = configs[2]
+        self.redigiSpec = redigiWorkload('reDigiSpec', redigiArgs)
+        self.redigiSpec.setSpecUrl(os.path.join(self.workDir,
+                                                'reDigiSpec.spec'))
+        self.redigiSpec.save(self.redigiSpec.specUrl())
 
     def createResubmitSpec(self, serverUrl, couchDB, parentage = False):
         """
@@ -629,6 +670,18 @@ class WorkQueueTest(WorkQueueTestCase):
         syncQueues(self.localQueue)
         self.assertEqual(len(self.localQueue.getWork(slots)), 3)
 
+    def testSplittingLargeInputs(self):
+        """
+        _testSplittingLargeInputs_
+
+        Check that we can split large inputs and store the processed inputs
+        in the inbox element correctly.
+        """
+        GlobalParams.setNumOfBlocksPerDataset(500)
+        self.globalQueue.queueWork(self.processingSpec.specUrl())
+        inboxElement = self.globalQueue.backend.getInboxElements(elementIDs = [self.processingSpec.name()])
+        self.assertEqual(len(inboxElement[0]['ProcessedInputs']), GlobalParams.numOfBlocksPerDataset())
+        return
 
     def testGlobalBlockSplitting(self):
         """Block splitting at global level"""
@@ -994,10 +1047,10 @@ class WorkQueueTest(WorkQueueTestCase):
         spec.save(spec.specUrl())
         self.localQueue.params['Teams'] = ['cmsdataops']
         self.globalQueue.queueWork(spec.specUrl(), "Resubmit_TestWorkload", team = "cmsdataops")
-        self.localQueue.pullWork({"T1_US_FNAL": 100},
-                                 continuousReplication = False)
+        self.assertEqual(self.localQueue.pullWork({"T1_US_FNAL": 100},
+                                                  continuousReplication = False), 1)
         syncQueues(self.localQueue)
-        self.localQueue.getWork({"T1_US_FNAL": 100})
+        self.assertEqual(len(self.localQueue.getWork({"T1_US_FNAL": 100})), 1)
 
     def testResubmissionWithParentsWorkflow(self):
         """Test workflow resubmission with parentage via ACDC"""
@@ -1014,6 +1067,26 @@ class WorkQueueTest(WorkQueueTestCase):
                                  continuousReplication = False)
         syncQueues(self.localQueue)
         self.localQueue.getWork({"T1_US_FNAL": 100})
+
+    def testResubmissionWorkflowSiteWhitelistLocations(self):
+        """ Test an ACDC workflow where we use the site whitelist as locations"""
+        acdcCouchDB = "workqueue_t_acdc"
+        self.testInit.setupCouch(acdcCouchDB, "GroupUser", "ACDC")
+
+        spec = self.createResubmitSpec(self.testInit.couchUrl,
+                                       acdcCouchDB)
+        spec.setSpecUrl(os.path.join(self.workDir, 'resubmissionWorkflow.spec'))
+        spec.setSiteWhitelist('T1_UK_RAL')
+        spec.setLocationDataSourceFlag()
+        spec.save(spec.specUrl())
+        self.localQueue.params['Teams'] = ['cmsdataops']
+        self.globalQueue.queueWork(spec.specUrl(), "Resubmit_TestWorkload", team = "cmsdataops")
+        self.assertEqual(self.localQueue.pullWork({"T1_US_FNAL": 100},
+                                 continuousReplication = False), 0)
+        self.assertEqual(self.localQueue.pullWork({"T1_UK_RAL": 100},
+                                 continuousReplication = False), 1)
+        syncQueues(self.localQueue)
+        self.assertEqual(len(self.localQueue.getWork({"T1_UK_RAL": 100})),1)
 
     def testThrottling(self):
         """Pull work only if all previous work processed in child"""
@@ -1110,9 +1183,16 @@ class WorkQueueTest(WorkQueueTestCase):
         self.assertEqual(self.localQueue.getWMBSInjectionStatus(self.spec.name()),
                          False)
 
-        #update parents status
+        #update parents status but is still running open since it is the default
         self.localQueue.performQueueCleanupActions()
         self.localQueue.backend.sendToParent(continuous = False)
+        self.assertEqual(self.localQueue.getWMBSInjectionStatus(),
+                         [{'testProcessing': False}, {'testProduction': False}])
+        self.assertEqual(self.localQueue.getWMBSInjectionStatus(self.spec.name()),
+                         False)
+
+        # close the global inbox elements, they won't be split anymore
+        self.globalQueue.closeWork('testProcessing', 'testProduction')
         self.assertEqual(self.localQueue.getWMBSInjectionStatus(),
                          [{'testProcessing': True}, {'testProduction': True}])
         self.assertEqual(self.localQueue.getWMBSInjectionStatus(self.spec.name()),
@@ -1155,8 +1235,8 @@ class WorkQueueTest(WorkQueueTestCase):
         self.assertEqual(self.queue.statusInbox()[0]['Status'], 'Failed')
 
 
-    def testDrainSite(self):
-        """Allow sites to drain"""
+    def testSiteStatus(self):
+        """Check that we only pull work on sites in Normal status"""
         self.globalQueue.queueWork(self.processingSpec.specUrl())
         self.globalQueue.queueWork(self.spec.specUrl())
         # acquire 1 element of a wf and then mark site as draining.
@@ -1168,17 +1248,16 @@ class WorkQueueTest(WorkQueueTestCase):
         existing_wf = existing_wf[0]
         rc = ResourceControl()
         rc.changeSiteState('T2_XX_SiteA', 'Draining')
-        # pull more work, only elements from previously pulled wf should be acquired
-        self.localQueue.pullWork(resources = {'doesnt exist' : 0}, draining_resources={'T2_XX_SiteA' : 10},
-                                 continuousReplication = False)
+        rc.changeSiteState('T2_XX_SiteB', 'Draining')
+        # pull more work, no work should be acquired
+        self.localQueue.pullWork(continuousReplication = False)
         syncQueues(self.localQueue)
         [self.fail('Got new wf %s for draining site' % x['RequestName']) for x in self.localQueue.statusInbox() if x['RequestName'] != existing_wf]
         # wmbs injection for draining sites continues to work
         self.assertTrue(self.localQueue.getWork({'T2_XX_SiteA' : 10}))
         # re-enable site and get remainder of work
         rc.changeSiteState('T2_XX_SiteA', 'Normal')
-        self.assertTrue(self.localQueue.pullWork({'T2_XX_SiteA' : 100},
-                                                 continuousReplication = False))
+        self.assertTrue(self.localQueue.pullWork(continuousReplication = False))
         syncQueues(self.localQueue)
         self.assertTrue(self.localQueue.getWork({'T2_XX_SiteA' : 100}))
 
@@ -1216,6 +1295,7 @@ class WorkQueueTest(WorkQueueTestCase):
         # queue as normal and inject 1 block to wmbs
 
         self.globalQueue.queueWork(self.processingSpec.specUrl())
+        self.globalQueue.closeWork(self.processingSpec.name())
         self.localQueue.pullWork({'T2_XX_SiteA' : 100, 'T2_XX_SiteB' : 100},
                                  continuousReplication = False)
         syncQueues(self.localQueue)
@@ -1244,6 +1324,166 @@ class WorkQueueTest(WorkQueueTestCase):
         # cleanup now progresses
         syncQueues(self.localQueue)
         self.assertTrue(self.localQueue.getWMBSInjectionStatus(self.processingSpec.name()))
+
+    def testCloseWorkTimeout(self):
+        """Check that it can close inbox elements on demand and on timeout"""
+        # Put some work in
+        self.globalQueue.queueWork(self.processingSpec.specUrl())
+        self.globalQueue.queueWork(self.parentProcSpec.specUrl())
+        self.globalQueue.queueWork(self.spec.specUrl())
+        self.globalQueue.queueWork(self.openRunningSpec.specUrl())
+        # Check that all inbox elements are open
+        openRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = True)
+        closedRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = False)
+        self.assertEqual(len(openRunningElements), 4, "Not all queued elements are marked as running open")
+        self.assertEqual(len(closedRunningElements), 0 , "Some spurious closed element is in the inbox")
+        # First pass of closeWork, indicate a request to close. Only that one will be closed
+        self.globalQueue.closeWork(self.parentProcSpec.name())
+        openRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = True)
+        closedRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = False)
+        self.assertEqual(len(openRunningElements), 3, "Less than 3 elements remain open")
+        self.assertEqual(len(closedRunningElements), 1 , "More than one inbox element was closed")
+        self.assertEqual(closedRunningElements[0]['RequestName'], self.parentProcSpec.name(), "Wrong spec was closed")
+        # Now a closeWork pass without any specific request, should close 2 more elements
+        self.globalQueue.closeWork()
+        openRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = True)
+        closedRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = False)
+        self.assertEqual(len(openRunningElements), 1, "More than one element was left open")
+        self.assertEqual(len(closedRunningElements), 3 , "More than one inbox element was closed")
+        self.assertEqual(openRunningElements[0]['RequestName'], self.openRunningSpec.name(), "Wrong spec was left open")
+        # Now wait 10 seconds, that's the delay and nothing has updated the inbox element. It should be closed by the poll cycle
+        time.sleep(10)
+        self.globalQueue.closeWork()
+        openRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = True)
+        closedRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = False)
+        self.assertEqual(len(openRunningElements), 0, "There are still open elements")
+        self.assertEqual(len(closedRunningElements), 4, "Not all elements are closed after the last poll cycle")
+        return
+
+    def testCloseWorkOpenBlocks(self):
+        """Check that it can close inbox elements and keep them open when there are open blocks"""
+        # Put some work in
+        self.globalQueue.queueWork(self.processingSpec.specUrl())
+        self.globalQueue.queueWork(self.openRunningSpec.specUrl())
+        # Check that all inbox elements are open
+        openRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = True)
+        closedRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = False)
+        self.assertEqual(len(openRunningElements), 2, "Not all queued elements are marked as running open")
+        self.assertEqual(len(closedRunningElements), 0 , "Some spurious closed element is in the inbox")
+
+        # First pass of closeWork, only the one without open running timeout will be closed
+        self.globalQueue.closeWork()
+        openRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = True)
+        closedRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = False)
+        self.assertEqual(len(openRunningElements), 1)
+        self.assertEqual(len(closedRunningElements), 1)
+        self.assertEqual(closedRunningElements[0]['RequestName'], self.processingSpec.name(), "Wrong spec was closed")
+        # Open a block
+        GlobalParams.setNumOfBlocksPerDataset(3)
+        GlobalParams.setBlocksOpenForWriting(True)
+        time.sleep(10)
+        # A closeWork pass, won't close anything since there in an open block. No matter that the delay since the last block ha
+        self.globalQueue.closeWork()
+        openRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = True)
+        closedRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = False)
+        self.assertEqual(len(openRunningElements), 1)
+        self.assertEqual(len(closedRunningElements), 1)
+        # Close the block, the last time we saw it was just a moment ago so if we do another pass it won't close it
+        GlobalParams.setBlocksOpenForWriting(False)
+        self.globalQueue.closeWork()
+        openRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = True)
+        closedRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = False)
+        self.assertEqual(len(openRunningElements), 1)
+        self.assertEqual(len(closedRunningElements), 1)
+        # Now a timeout since we last saw the open block
+        time.sleep(10)
+        self.globalQueue.closeWork()
+        openRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = True)
+        closedRunningElements = self.globalQueue.backend.getInboxElements(OpenForNewData = False)
+        self.assertEqual(len(openRunningElements), 0, "There are still open elements")
+        self.assertEqual(len(closedRunningElements), 2, "Not all elements are closed after the last poll cycle")
+        return
+
+
+    def testProcessingWithContinuousSplitting(self):
+        """Test the open request handling in the WorkQueue"""
+        # Put normal work in
+        specfile = self.processingSpec.specUrl()
+
+        # Queue work with initial block count
+        self.assertEqual(GlobalParams.numOfBlocksPerDataset(), self.globalQueue.queueWork(specfile))
+        self.assertEqual(GlobalParams.numOfBlocksPerDataset(), len(self.globalQueue))
+
+        # Try adding work, no change in blocks available. No work should be added
+        self.assertEqual(0, self.globalQueue.addWork(self.processingSpec.name()))
+        self.assertEqual(GlobalParams.numOfBlocksPerDataset(), len(self.globalQueue))
+
+        # Now pull work to the local queue and WMBS
+        self.localQueue.pullWork({'T2_XX_SiteA' : 1},
+                                 continuousReplication = False)
+        syncQueues(self.localQueue)
+        self.assertEqual(len(self.localQueue), 1)
+        self.assertEqual(len(self.globalQueue), 1)
+        work = self.localQueue.getWork({'T2_XX_SiteA' : 1000})
+        syncQueues(self.localQueue)
+        syncQueues(self.globalQueue)
+
+        # Now "pop up" 3 new blocks
+        GlobalParams.setNumOfBlocksPerDataset(GlobalParams.numOfBlocksPerDataset() + 3)
+
+        # Now add the new blocks properly, check that the inbox element didn't change status
+        self.assertEqual(3, self.globalQueue.addWork(self.processingSpec.name()))
+        self.assertEqual(4, len(self.globalQueue))
+        self.assertEqual(len(self.globalQueue.backend.getInboxElements(status = "Running")), 1)
+
+        # Now pull the new work to the local queue
+        self.localQueue.pullWork({'T2_XX_SiteB' : 1000, 'T2_XX_SiteC' : 1000},
+                                 continuousReplication = False)
+        syncQueues(self.localQueue)
+        self.assertEqual(len(self.localQueue), 4)
+        self.assertEqual(len(self.globalQueue), 0)
+
+        # One final pass with nothing added which shows the inbox element was updated properly
+        self.assertEqual(0, self.globalQueue.addWork(self.processingSpec.name()))
+
+        return
+
+    def testProcessingWithPileup(self):
+        """Test a full WorkQueue cycle in a request with pileup datasets"""
+        specfile = self.redigiSpec.specUrl()
+        # Queue work with initial block count
+        self.assertEqual(GlobalParams.numOfBlocksPerDataset(), self.globalQueue.queueWork(specfile))
+        self.assertEqual(GlobalParams.numOfBlocksPerDataset(), len(self.globalQueue))
+
+        # All blocks are in Site A and B, but the pileup is only at C.
+        # We should not be able to pull the work.
+        self.assertEqual(self.localQueue.pullWork({'T2_XX_SiteA' : 1,
+                                                   'T2_XX_SiteB' : 3,
+                                                   'T2_XX_SiteC' : 4},
+                                                  continuousReplication = False), 0)
+        # The PhEDEx emulator will move the pileup blocks to site A
+        self.globalQueue.updateLocationInfo()
+        self.assertEqual(self.localQueue.pullWork({'T2_XX_SiteB' : 1,
+                                                   'T2_XX_SiteC' : 4},
+                                                  continuousReplication = False), 0)
+
+        # Now try with site A
+        self.assertEqual(self.localQueue.pullWork({'T2_XX_SiteA' : 1},
+                                                  continuousReplication = False), 1)
+        syncQueues(self.localQueue)
+        self.assertEqual(len(self.localQueue), 1)
+        self.assertEqual(len(self.globalQueue), 1)
+
+        # Pull it to WMBS, first try with an impossible site
+        # The pileup was split again in the local queue so site A is not there
+        self.assertEqual(len(self.localQueue.getWork({'T2_XX_SiteA' : 1,
+                                                      'T2_XX_SiteB' : 3,
+                                                      'T2_XX_SiteC' : 4})), 0)
+        Globals.moveBlock({'/mixing/pileup/dataset#1' : ['T2_XX_SiteA', 'T2_XX_SiteC'],
+                           '/mixing/pileup/dataset#2' : ['T2_XX_SiteA', 'T2_XX_SiteC']})
+        self.localQueue.updateLocationInfo()
+        self.assertEqual(len(self.localQueue.getWork({'T2_XX_SiteA' : 1})), 1)
+        self.assertEqual(len(self.localQueue), 0)
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+
 """
 _MakeRequest_
 
@@ -7,15 +7,12 @@ API for creating a new request in the database
 """
 
 
-
-
-
-import logging
 import WMCore.RequestManager.RequestDB.Connection as DBConnect
 
 
 
-def createRequest(hnUser, groupName, requestName, requestType, workflowName, prep_id):
+def createRequest(hnUser, groupName, requestName, requestType, workflowName,
+                  prep_id, requestPriority):
     """
     _createRequest_
 
@@ -80,8 +77,8 @@ def createRequest(hnUser, groupName, requestName, requestType, workflowName, pre
             request_status = statusMap['new'],
             association_id = groups[groupName],
             workflow = workflowName,
-            prep_id = prep_id
-            )
+            prep_id = prep_id,
+            requestPriority = requestPriority)
     except Exception, ex:
         msg = "Unable to create request named %s\n" % requestName
         msg += str(ex)
@@ -171,12 +168,13 @@ def associateSoftware(requestName, softwareName):
 
 
 
-def updateRequestSize(requestName, reqEventsSize, reqFilesSize = None, reqSizeOfEvent = None):
+def updateRequestSize(requestName, reqEventsSize,
+                      reqFilesSize, reqSizeOfEvent):
     """
     _updateRequestSize_
 
     Update the size of the request in events to be generated/read
-    and optionally  the number of files to be read for processing
+    and the number of files to be read for processing
     requests
 
     """
@@ -192,5 +190,3 @@ def updateRequestSize(requestName, reqEventsSize, reqFilesSize = None, reqSizeOf
 
     updateSize = factory(classname = "Request.Size")
     updateSize.execute(reqId, reqEventsSize, reqFilesSize, reqSizeOfEvent)
-
-    return

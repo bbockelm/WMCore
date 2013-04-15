@@ -5,33 +5,54 @@ WMStats.Controls = function($){
     var _categorySelector;
     
     function setFilter(selector) {
-       $(selector).append('<div name="filter">\
-                            campaign: <input name="campaign" value=""></input>\
-                            workflow: <input name="workflow" value=""></input>\
-                            type: <input name="request_type" value=""></input>\
-                            status: <input name="request_status" value=""></input>\
+       $(selector).append('<legend>filter</legend><div name="filter" class="filterFormat">\
+                            <div class="verticalFilter"> campaign: <br/><input name="campaign" value=""></input> </div> \
+                            <div class="verticalFilter"> workflow: <br/><input name="workflow" value=""></input> </div>\
+                            <div class="verticalFilter"> type: <br/><input name="request_type" value=""></input> </div>\
+                            <div class="verticalFilter"> status: <br/><input name="request_status" value=""></input> </div>\
+                            <div class="verticalFilter"> input dataset: <br/><input name="inputdataset" value=""></input> </div>\
+                            <div class="verticalFilter"> output dataset: <br/><input name="outputdatasets" value=""></input> </div>\
+                            <div class="verticalFilter"> site whitelist: <br/><input name="site_white_list" value=""></input> </div>\
+                            <div class="endFlter"> agent:<br/><input name="agent_url" value=""></input> </div>\
                            </div>');
        _filterSelector = selector + ' div[name="filter"] input';
     };
-    
+
     function setCategoryButton(selector) {
         var categoryBottons = 
-        '<nav class="category-button">\
-            <input type="radio" name="category-select" value="requests" id="request-category"></input>\
-            <label for="request-category">All Requests</label>\
-            <input type="radio" name="category-select" value="campaign" id="campaign-category" checked="checked"></input>\
-            <label for="campaign-category">Campaign</label>\
-            <input type="radio" name="category-select" value="sites" id="site-category"></input>\
-            <label for="site-category">Site</label>\
+        '<nav id="category_button" class="button-group">\
+            <ul><li><a href="#campaign" class="nav-button nav-button-selected"> Campaign </a></li>\
+                <li><a href="#sites" class="nav-button button-unselected"> Site </a></li>\
+                <li><a href="#cmssw" class="nav-button button-unselected"> CMSSW </a></li></ul>\
          </nav>';
         
         $(selector).append(categoryBottons);
-        _categorySelector = selector + ' input[name="category-select"][type="radio"]:checked';
+        WMStats.Env.CategorySelection = "campaign";
+    };
+    
+    function setViewSwitchButton(selector) {
+        var viewSwitchBottons = 
+        '<nav id="view_switch_button" class="button-group">\
+            <ul><li><a href="#progress" class="nav-button nav-button-selected"> progress </a></li>\
+                <li><a href="#numJobs" class="nav-button button-unselected"> number of jobs </a></li></ul>\
+         </nav>';
         
+        $(selector).append(viewSwitchBottons);
+        WMStats.Env.ViewSwitchSelection = "progress";
+    };
+    
+    function setAllRequestButton(selector) {
+        var requestBottons = 
+        '<nav id="all_requests" class="button-group">\
+            <ul><li><a href="#" class="nav-button"> all requests </a></li></ul>\
+        </nav>';
+        
+        $(selector).append(requestBottons).addClass("button-group");
+        WMStats.Env.RequestSelection = "all_requests";
     };
     
     function getCategoryButtonValue() {
-         return $(_categorySelector).val();
+         return WMStats.Env.CategorySelection;
     };
     
     function getFilter() {
@@ -46,14 +67,25 @@ WMStats.Controls = function($){
         $(selector + " ul").addClass("tabs-nav");
     };
     
+    function setExternalLink(selector) {
+        var outsideLink = 
+        '<a href="/couchdb/alertscollector/_design/AlertsCollector/index.html" target="alertColletorFrame"> agent alert </a>';
+        
+        $(selector).append(outsideLink);
+    };
+    
     return {
         setFilter: setFilter,
         setTabs: setTabs,
         setCategoryButton: setCategoryButton,
+        setAllRequestButton: setAllRequestButton,
         getCategoryButtonValue: getCategoryButtonValue,
+        setViewSwitchButton: setViewSwitchButton,
+        setExternalLink: setExternalLink,
         getFilter: getFilter,
         requests: "requests",
         sites: "sites",
-        campaign: "campaign"
+        campaign: "campaign",
+        cmssw: "cmssw"
     }
 }(jQuery);

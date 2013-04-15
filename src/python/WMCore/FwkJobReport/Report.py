@@ -23,6 +23,7 @@ from WMCore.DataStructs.Run import Run
 
 from WMCore.FwkJobReport.FileInfo import FileInfo
 from WMCore.WMException           import WMException
+from WMCore.WMExceptions import WMJobErrorCodes
 
 
 class FwkJobReportException(WMException):
@@ -273,6 +274,33 @@ class Report:
         Returns the site name attribute (no step specific)
         """
         return getattr(self.data, 'siteName', {})
+
+    def getExitCodes(self):
+        """
+        _getExitCodes_
+
+        Return a list of all non-zero exit codes in the report
+        """
+        returnCodes = set()
+        for stepName in self.listSteps():
+            returnCodes.update(self.getStepExitCodes(stepName = stepName))
+        return returnCodes
+
+    def getStepExitCodes(self, stepName):
+        """
+        _getStepExitCodes_
+
+        Returns a list of all non-zero exit codes in the step
+        """
+        returnCodes = set()
+        reportStep = self.retrieveStep(stepName)
+        errorCount = getattr(reportStep.errors, "errorCount", 0)
+        for i in range(errorCount):
+            reportError = getattr(reportStep.errors, "error%i" % i)
+            if getattr(reportError, 'exitCode', None):
+                returnCodes.add(int(reportError.exitCode))
+
+        return returnCodes
 
     def getExitCode(self):
         """
@@ -707,7 +735,7 @@ class Report:
         newFile['inputPath']      = getattr(fileRef, 'inputPath', None)
         newFile['custodialSite']  = getattr(fileRef, 'custodialSite', None)
         newFile["outputModule"]   = outputModule
-
+        newFile["fileRef"] = fileRef
 
         return newFile
 
@@ -721,13 +749,13 @@ class Report:
         stepReport = self.retrieveStep(step = step)
 
         if not stepReport:
-            logging.error("Asked to retrieve files from non-existant step %s" % step)
+            logging.debug("Asked to retrieve files from non-existant step %s" % step)
             return []
 
         listOfModules = getattr(stepReport, 'outputModules', None)
 
         if not listOfModules:
-            logging.error("Asked to retrieve files from step %s with no outputModules" % step)
+            logging.debug("Asked to retrieve files from step %s with no outputModules" % step)
             logging.debug("StepReport: %s" % stepReport)
             return []
 
@@ -1057,9 +1085,12 @@ class Report:
 
         for stepName in steps:
             timeStamps = self.getTimes(stepName = stepName)
-            if startTime > timeStamps['startTime']:
+            if timeStamps['startTime'] is None or timeStamps['stopTime'] is None:
+                # Unusable times
+                continue
+            if startTime is None or startTime > timeStamps['startTime']:
                 startTime = timeStamps['startTime']
-            if stopTime < timeStamps['stopTime']:
+            if stopTime is None or stopTime < timeStamps['stopTime']:
                 stopTime = timeStamps['stopTime']
 
         return {'startTime': startTime, 'stopTime': stopTime}
@@ -1116,7 +1147,7 @@ class Report:
 
         return fileRefs
 
-    def setAcquisitionProcessing(self, acquisitionEra, processingVer):
+    def setAcquisitionProcessing(self, acquisitionEra, processingVer, processingStr = None):
         """
         _setAcquisitionProcessing_
 
@@ -1130,6 +1161,7 @@ class Report:
         for f in fileRefs:
             f.acquisitionEra = acquisitionEra
             f.processingVer  = processingVer
+            f.processingStr  = processingStr
 
         return
 
@@ -1291,7 +1323,6 @@ class Report:
           have an adler32 checksum.  If they don't it creates an error with
           code 60451 for the step, failing it.
         """
-
         error = None
         files = self.getAllFilesFromStep(step = stepName)
         for f in files:
@@ -1305,6 +1336,33 @@ class Report:
             self.addError(stepName, 60451, "NoAdler32Checksum", msg)
             self.setStepStatus(stepName = stepName, status = 60451)
 
+        return
+
+    def checkForRunLumiInformation(self, stepName):
+        """
+        _checkForRunLumiInformation_
+
+        Some steps require that all output files have run lumi information.
+        This will go through all output files in a step and make sure
+        they have run/lumi informaiton. If they don't it creates an error
+        with code 60452 for the step, failing it.
+
+        """
+        error = None
+        files = self.getAllFilesFromStep(step = stepName)
+        for f in files:
+            if not f.get('runs', None):
+                error = f.get('lfn', None)
+            else:
+                for run in f['runs']:
+                    lumis = run.lumis
+                    if not lumis:
+                        error = f.get('lfn', None)
+                        break
+        if error:
+            msg = '%s, file was %s' % (WMJobErrorCodes[60452], error)
+            self.addError(stepName, 60452, "NoRunLumiInformation", msg)
+            self.setStepStatus(stepName = stepName, status = 60452)
         return
 
     def stripInputFiles(self):

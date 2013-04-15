@@ -29,6 +29,10 @@ def monitorDocFromRequestSchema(schema):
     doc["async_dest"] = schema.get('asyncDest', "")
     doc["dbs_url"] = schema.get("DbsUrl", "")
     doc["publish_dbs_url"] = schema.get("PublishDbsUrl", "")
+    doc["outputdatasets"] = schema.get('OutputDatasets', [])
+    doc["cmssw"] = schema.get('SoftwareVersions', [])
+    doc['prep_id'] = schema.get('PrepID', None)
+
     # team name is not yet available need to be updated in assign status
     #doc['team'] = schema['team']
     return doc
@@ -45,6 +49,7 @@ class WMStatsWriter(WMStatsReader):
             self.couchURL, self.dbName = splitCouchServiceURL(couchURL)
         self.couchServer = CouchServer(self.couchURL)
         self.couchDB = self.couchServer.connectDatabase(self.dbName, False)
+        self.replicatorDB = self.couchServer.connectDatabase('_replicator', False)
 
     def uploadData(self, docs):
         """
@@ -86,12 +91,13 @@ class WMStatsWriter(WMStatsReader):
                                          fields=totalStats)
 
     def updateFromWMSpec(self, spec):
-        # currently only update priority and siteWhitelist
+        # currently only update priority and siteWhitelist and output dataset
         # complex field needs to be JSON encoded
         # assuming all the toplevel tasks has the same site white lists
         #priority is priority + user priority + group priority
         fields = {'priority': spec.priority(),
-                  'site_white_list': spec.getTopLevelTask()[0].siteWhitelist()}
+                  'site_white_list': spec.getTopLevelTask()[0].siteWhitelist(),
+                  'outputdatasets': spec.listOutputDatasets()}
         return self.couchDB.updateDocument(spec.name(), 'WMStats',
                     'generalFields',
                     fields={'general_fields': JSONEncoder().encode(fields)})
@@ -110,7 +116,14 @@ class WMStatsWriter(WMStatsReader):
     def updateAgentInfo(self, agentInfo):
         return self.couchDB.updateDocument(agentInfo['_id'], 'WMStats',
                         'agentInfo',
-                        fields={'agent_info': JSONEncoder().encode(agentInfo)})
+                        {'agent_info': JSONEncoder().encode(agentInfo)},
+                        useBody=True)
+   
+    def updateLogArchiveLFN(self, jobNames, logArchiveLFN):
+        for jobName in jobNames:
+            self.couchDB.updateDocument(jobName, 'WMStats',
+                        'jobLogArchiveLocation',
+                        fields={'logArchiveLFN': logArchiveLFN}) 
 
     def deleteOldDocs(self, days):
         """
@@ -149,3 +162,29 @@ class WMStatsWriter(WMStatsReader):
     def getDBInstance(self):
         return self.couchDB
 
+    def getServerInstance(self):
+        return self.couchServer
+    
+    def getActiveTasks(self):
+        couchStatus = self.couchServer.status()
+        return couchStatus['active_tasks']
+
+    def deleteReplicatorDocs(self):
+        repDocs = self.replicatorDB.allDocs()['rows']
+        for j in repDocs:
+            if not j['id'].startswith('_'):
+                doc = {}
+                doc["_id"]  = j['id']
+                doc["_rev"] = j['value']['rev']
+                self.replicatorDB.queueDelete(doc)
+        committed = self.replicatorDB.commit()
+
+    def deleteDocsByIDs(self, ids):
+        docs = self.couchDB.allDocs(keys=ids)['rows']
+        for j in docs:
+            doc = {}
+            doc["_id"]  = j['id']
+            doc["_rev"] = j['value']['rev']
+            self.couchDB.queueDelete(doc)
+        committed = self.couchDB.commit()
+        return committed

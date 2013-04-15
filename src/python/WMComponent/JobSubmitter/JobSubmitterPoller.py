@@ -14,17 +14,16 @@ import logging
 import threading
 import os.path
 import cPickle
-import traceback
 
 # WMBS objects
 from WMCore.DAOFactory        import DAOFactory
+from WMCore.WMExceptions      import WMJobErrorCodes
 
 from WMCore.JobStateMachine.ChangeState       import ChangeState
 from WMCore.WorkerThreads.BaseWorkerThread    import BaseWorkerThread
 from WMCore.ResourceControl.ResourceControl   import ResourceControl
 from WMCore.DataStructs.JobPackage            import JobPackage
 from WMCore.FwkJobReport.Report               import Report
-from WMCore.WMBase                            import getWMBASE
 from WMCore.WMException                       import WMException
 from WMCore.BossAir.BossAirAPI                import BossAirAPI
 
@@ -53,6 +52,7 @@ class JobSubmitterPollerException(WMException):
     """
     pass
 
+
 class JobSubmitterPoller(BaseWorkerThread):
     """
     _JobSubmitterPoller_
@@ -68,13 +68,10 @@ class JobSubmitterPoller(BaseWorkerThread):
         self.daoFactory = DAOFactory(package = "WMCore.WMBS", \
                                      logger = logging,
                                      dbinterface = myThread.dbi)
-
         self.config = config
 
         #Libraries
         self.resourceControl = ResourceControl()
-
-
 
         self.changeState = ChangeState(self.config)
         self.repollCount = getattr(self.config.JobSubmitter, 'repollCount', 10000)
@@ -83,19 +80,21 @@ class JobSubmitterPoller(BaseWorkerThread):
         self.bossAir = BossAirAPI(config = self.config)
 
         # Additions for caching-based JobSubmitter
-        self.cachedJobIDs   = set()
-        self.cachedJobs     = {}
-        self.jobDataCache   = {}
-        self.jobsToPackage  = {}
-        self.sandboxPackage = {}
-        self.siteKeys       = {}
-        self.locationDict   = {}
-        self.cmsNames       = {}
-        self.drainSites     = []
-        self.sortedSites    = []
-        self.packageSize    = getattr(self.config.JobSubmitter, 'packageSize', 500)
-        self.collSize       = getattr(self.config.JobSubmitter, 'collectionSize',
-                                      self.packageSize * 1000)
+        self.workflowTimestamps = {}
+        self.cachedJobIDs       = set()
+        self.cachedJobs         = {}
+        self.jobDataCache       = {}
+        self.jobsToPackage      = {}
+        self.sandboxPackage     = {}
+        self.siteKeys           = {}
+        self.locationDict       = {}
+        self.cmsNames           = {}
+        self.drainSites         = set()
+        self.abortSites         = set()
+        self.sortedSites        = []
+        self.packageSize        = getattr(self.config.JobSubmitter, 'packageSize', 500)
+        self.collSize           = getattr(self.config.JobSubmitter, 'collectionSize',
+                                          self.packageSize * 1000)
 
         # initialize the alert framework (if available)
         self.initAlerts(compName = "JobSubmitter")
@@ -123,16 +122,12 @@ class JobSubmitterPoller(BaseWorkerThread):
         # Now the DAOs
         self.listJobsAction = self.daoFactory(classname = "Jobs.ListForSubmitter")
         self.setLocationAction = self.daoFactory(classname = "Jobs.SetLocation")
-
-        # Now the error report
-        self.noSiteErrorReport = Report()
-        self.noSiteErrorReport.addError("JobSubmit", 61101, "SubmitFailed", "NoAvailableSites")
-
         self.locationAction = self.daoFactory(classname = "Locations.GetSiteInfo")
+        self.setFWJRPathAction = self.daoFactory(classname = "Jobs.SetFWJRPath")
 
-        # Call once to fill the siteKeys
-        # TODO: Make this less clumsy!
-        self.getThresholds()
+        # Keep a record of the thresholds in memory
+        self.currentRcThresholds = {}
+
         return
 
     def getPackageCollection(self, sandboxDir):
@@ -237,7 +232,7 @@ class JobSubmitterPoller(BaseWorkerThread):
 
         Query WMBS for all jobs in the 'created' state.  For all jobs returned
         from the query, check if they already exist in the cache.  If they
-        don't unpickle them and combine their site white and black list with
+        don't, unpickle them and combine their site white and black list with
         the list of locations they can run at.  Add them to the cache.
 
         Each entry in the cache is a tuple with five items:
@@ -247,7 +242,7 @@ class JobSubmitterPoller(BaseWorkerThread):
           - Path to sanbox
           - Path to cache directory
         """
-        badJobs = []
+        badJobs = dict([(x, []) for x in range(61101,61104)])
         dbJobs = set()
 
         logging.info("Querying WMBS for jobs to be submitted...")
@@ -271,7 +266,7 @@ class JobSubmitterPoller(BaseWorkerThread):
             if not os.path.isfile(pickledJobPath):
                 # Then we have a problem - there's no file
                 logging.error("Could not find pickled jobObject %s" % pickledJobPath)
-                badJobs.append(newJob)
+                badJobs[601103].append(newJob)
                 continue
             try:
                 jobHandle = open(pickledJobPath, "r")
@@ -316,6 +311,14 @@ class JobSubmitterPoller(BaseWorkerThread):
                     blackList.extend(self.cmsNames.get(cmsName, []))
                 possibleLocations = possibleLocations - set(blackList)
 
+            non_abort_sites = [x for x in possibleLocations if x not in self.abortSites]
+            if non_abort_sites: # if there is at least a non aborted site then run there, otherwise fail the job
+                possibleLocations = non_abort_sites
+            else:
+                newJob['name'] = loadedJob['name']
+                badJobs[61102].append(newJob)
+                continue
+
             # try to remove draining sites if possible, this is needed to stop
             # jobs that could run anywhere blocking draining sites
             non_draining_sites = [x for x in possibleLocations if x not in self.drainSites]
@@ -324,7 +327,7 @@ class JobSubmitterPoller(BaseWorkerThread):
 
             if len(possibleLocations) == 0:
                 newJob['name'] = loadedJob['name']
-                badJobs.append(newJob)
+                badJobs[61101].append(newJob)
                 continue
 
             batchDir = self.addJobsToPackage(loadedJob)
@@ -338,10 +341,13 @@ class JobSubmitterPoller(BaseWorkerThread):
 
                 locTypeCache = self.cachedJobs[possibleLocation][newJob["type"]]
                 workflowName = newJob['workflow']
+                timestamp    = newJob['timestamp']
                 if not locTypeCache.has_key(workflowName):
                     locTypeCache[workflowName] = set()
                 if not self.jobDataCache.has_key(workflowName):
                     self.jobDataCache[workflowName] = {}
+                if not workflowName in self.workflowTimestamps:
+                    self.workflowTimestamps[workflowName] = timestamp
 
                 locTypeCache[workflowName].add(jobID)
 
@@ -354,22 +360,23 @@ class JobSubmitterPoller(BaseWorkerThread):
                        loadedJob.get("ownerDN", None),
                        loadedJob.get("ownerGroup", ''),
                        loadedJob.get("ownerRole", ''),
-                       loadedJob.get("priority", None),
                        frozenset(possibleLocations),
                        loadedJob.get("scramArch", None),
                        loadedJob.get("swVersion", None),
                        loadedJob["name"],
                        loadedJob.get("proxyPath", None),
-                       newJob['request_name'])
+                       newJob['request_name'],
+                       loadedJob.get("estimatedJobTime", None),
+                       loadedJob.get("estimatedDiskUsage", None),
+                       loadedJob.get("estimatedMemoryUsage", None))
 
             self.jobDataCache[workflowName][jobID] = jobInfo
 
-        if len(badJobs) > 0:
-            logging.error("The following jobs have no possible sites to run at: %s" % badJobs)
-            for job in badJobs:
-                job['couch_record'] = None
-                job['fwjr']         = self.noSiteErrorReport
-            self.changeState.propagate(badJobs, "submitfailed", "created")
+        # Register failures in submission
+        for errorCode in badJobs:
+            if badJobs[errorCode]:
+                logging.debug("The following jobs could not be submitted: %s, error code : %d" % (badJobs, errorCode))
+                self._handleSubmitFailedJobs(badJobs[errorCode], errorCode)
 
         # If there are any leftover jobs, we want to get rid of them.
         self.flushJobPackages()
@@ -398,20 +405,43 @@ class JobSubmitterPoller(BaseWorkerThread):
         logging.info("Done pruning killed jobs, moving on to submit.")
         return
 
+    def _handleSubmitFailedJobs(self, badJobs, exitCode):
+        """
+        __handleSubmitFailedJobs_
+
+        For a default job report for the exitCode
+        and register in the job. Preserve it on disk as well.
+        Propagate the failure to the JobStateMachine.
+        """
+        fwjrBinds = []
+        for job in badJobs:
+            job['couch_record'] = None
+            job['fwjr'] = Report()
+            job['fwjr'].addError("JobSubmit", exitCode, "SubmitFailed", WMJobErrorCodes[exitCode])
+            fwjrPath = os.path.join(job['cache_dir'],
+                                    'Report.%d.pkl' % int(job['retry_count']))
+            job['fwjr'].setJobID(job['id'])
+            try:
+                job['fwjr'].save(fwjrPath)
+                fwjrBinds.append({"jobid" : job["id"], "fwjrpath" : fwjrPath})
+            except IOError, ioer:
+                logging.error("Failed to write FWJR for submit failed job %d, message: %s" % (job['id'], str(ioer)))
+        self.changeState.propagate(badJobs, "submitfailed", "created")
+        self.setFWJRPathAction.execute(binds = fwjrBinds)
+        return
+
     def getThresholds(self):
         """
         _getThresholds_
 
-        Reformat the submit thresholds.  This will return a dictionary keyed by
+        Reformat the submit thresholds.  This will store a dictionary keyed by
         task type.  Each task type will contain a list of tuples where each
         tuple contains teh site name and the number of running jobs.
         """
         rcThresholds = self.resourceControl.listThresholdsForSubmit()
 
-        # Since we pull the drain information each time, there is
-        # no benefit really to storing the list of drained sites from
-        # one iteration to the next
-        self.drainSites = []
+        newDrainSites = set()
+        newAbortSites = set()
 
         for siteName in rcThresholds.keys():
             # Add threshold if we don't have it already
@@ -422,14 +452,25 @@ class JobSubmitterPoller(BaseWorkerThread):
                 self.cmsNames[cmsName] = []
             if not siteName in self.cmsNames[cmsName]:
                 self.cmsNames[cmsName].append(siteName)
-            if state != "Normal" and siteName not in self.drainSites:
-                self.drainSites.append(siteName)
+            if state in ["Down", "Draining"]:
+                newDrainSites.add(siteName)
+            if state == "Aborted":
+                newAbortSites.add(siteName)
 
             for seName in rcThresholds[siteName]["se_names"]:
                 if not seName in self.siteKeys.keys():
                     self.siteKeys[seName] = []
                 if not siteName in self.siteKeys[seName]:
                     self.siteKeys[seName].append(siteName)
+
+        # When the list of drain/abort sites changes between iteration then a location
+        # refresh is needed, for now it forces a full cache refresh
+        # TODO: Make it more efficient, only reshuffle locations when this happens
+        if newDrainSites != self.drainSites or  newAbortSites != self.abortSites:
+            logging.info("Draining or Aborted sites have changed, the cache will be rebuilt.")
+            self.cachedJobIDs       = set()
+            self.cachedJobs         = {}
+            self.jobDataCache       = {}
 
         #Sort the sites using the following criteria:
         #T1 sites go first, then T2, then T3
@@ -440,9 +481,13 @@ class JobSubmitterPoller(BaseWorkerThread):
                                   key = lambda x : rcThresholds[x]["total_pending_slots"],
                                   reverse = True)
         self.sortedSites = sorted(self.sortedSites, key = lambda x : rcThresholds[x]["cms_name"][0:2])
-        logging.debug('Will fill in the following order: %s' % str(self.sortedSites))
+        logging.debug('Sites will be filled in the following order: %s' % str(self.sortedSites))
 
-        return rcThresholds
+        self.currentRcThresholds = rcThresholds
+        self.abortSites = newAbortSites
+        self.drainSites = newDrainSites
+
+        return
 
     def assignJobLocations(self):
         """
@@ -461,8 +506,6 @@ class JobSubmitterPoller(BaseWorkerThread):
         jobsToSubmit = {}
         jobsToPrune = {}
 
-        rcThresholds = self.getThresholds()
-
         for siteName in self.sortedSites:
 
             totalPending = None
@@ -471,17 +514,17 @@ class JobSubmitterPoller(BaseWorkerThread):
                 continue
             logging.debug("Have site %s" % siteName)
             try:
-                totalPendingSlots   = rcThresholds[siteName]["total_pending_slots"]
-                totalRunningSlots   = rcThresholds[siteName]["total_running_slots"]
-                totalRunning        = rcThresholds[siteName]["total_running_jobs"]
-                totalPending        = rcThresholds[siteName]["total_pending_jobs"]
-                state               = rcThresholds[siteName]["state"]
+                totalPendingSlots   = self.currentRcThresholds[siteName]["total_pending_slots"]
+                totalRunningSlots   = self.currentRcThresholds[siteName]["total_running_slots"]
+                totalRunning        = self.currentRcThresholds[siteName]["total_running_jobs"]
+                totalPending        = self.currentRcThresholds[siteName]["total_pending_jobs"]
+                state               = self.currentRcThresholds[siteName]["state"]
             except KeyError, ex:
                 msg =  "Had invalid site info %s\n" % siteName['thresholds']
                 msg += str(ex)
                 logging.error(msg)
                 continue
-            for threshold in rcThresholds[siteName].get('thresholds', []):
+            for threshold in self.currentRcThresholds[siteName].get('thresholds', []):
                 try:
                     # Pull basic info for the threshold
                     taskType            = threshold["task_type"]
@@ -489,20 +532,15 @@ class JobSubmitterPoller(BaseWorkerThread):
                     taskPendingSlots    = threshold["pending_slots"]
                     taskRunning         = threshold["task_running_jobs"]
                     taskPending         = threshold["task_pending_jobs"]
+                    taskPriority        = threshold["priority"]
                 except KeyError, ex:
                     msg =  "Had invalid threshold %s\n" % threshold
                     msg += str(ex)
                     logging.error(msg)
                     continue
 
-                #If the site is down, I don't care about it
+                #If the site is down, do not submit anything to it
                 if state == 'Down':
-                    continue
-
-                #If the site is Finalizing, only do merge, cleanup and logCollect
-                if state == 'Finalizing' and taskType not in ('Merge',
-                                                              'Cleanup',
-                                                              'LogCollect'):
                     continue
 
                 #If the number of running exceeded the running slots in the
@@ -539,7 +577,9 @@ class JobSubmitterPoller(BaseWorkerThread):
                     cachedJobWorkflow = None
 
                     workflows = taskCache.keys()
-                    workflows.sort()
+                    # Sorting by timestamp on the subscription
+                    sortingKey = lambda x : self.workflowTimestamps[x]
+                    workflows.sort(key = sortingKey)
 
                     for workflow in workflows:
                         # Run a while loop until you get a job
@@ -604,14 +644,17 @@ class JobSubmitterPoller(BaseWorkerThread):
                                'userdn': cachedJob[5],
                                'usergroup': cachedJob[6],
                                'userrole': cachedJob[7],
-                               'priority': cachedJob[8],
+                               'priority': taskPriority,
                                'taskType': taskType,
-                               'possibleSites': cachedJob[9],
-                               'scramArch': cachedJob[10],
-                               'swVersion': cachedJob[11],
-                               'name': cachedJob[12],
-                               'proxyPath': cachedJob[13],
-                               'requestName': cachedJob[14]}
+                               'possibleSites': cachedJob[8],
+                               'scramArch': cachedJob[9],
+                               'swVersion': cachedJob[10],
+                               'name': cachedJob[11],
+                               'proxyPath': cachedJob[12],
+                               'requestName': cachedJob[13],
+                               'estimatedJobTime' : cachedJob[14],
+                               'estimatedDiskUsage' : cachedJob[15],
+                               'estimatedMemoryUsage' : cachedJob[16]}
 
                     # Add to jobsToSubmit
                     jobsToSubmit[package].append(jobDict)
@@ -625,11 +668,19 @@ class JobSubmitterPoller(BaseWorkerThread):
                         break
 
         # Remove the jobs that we're going to submit from the cache.
+        allWorkflows = set()
         for siteName in self.cachedJobs.keys():
             for taskType in self.cachedJobs[siteName].keys():
                 for workflow in self.cachedJobs[siteName][taskType].keys():
+                    allWorkflows.add(workflow)
                     if workflow in jobsToPrune.keys():
                         self.cachedJobs[siteName][taskType][workflow] -= jobsToPrune[workflow]
+
+        # Remove workflows from the timestamp dictionary which are not anymore in the cache
+        workflowsWithTimestamp = self.workflowTimestamps.keys()
+        for workflow in workflowsWithTimestamp:
+            if workflow not in allWorkflows:
+                del self.workflowTimestamps[workflow]
 
         logging.info("Have %s packages to submit." % len(jobsToSubmit))
         logging.info("Done assigning site locations.")
@@ -705,9 +756,9 @@ class JobSubmitterPoller(BaseWorkerThread):
         3) Submit the jobs to the plugin
         """
 
-
         try:
             myThread = threading.currentThread()
+            self.getThresholds()
             self.refreshCache()
             jobsToSubmit = self.assignJobLocations()
             self.submitJobs(jobsToSubmit = jobsToSubmit)

@@ -6,22 +6,17 @@ Unit tests for parentless WMBS merging.
 """
 
 import unittest
-import os
 import threading
 
 from WMCore.WMBS.File import File
 from WMCore.WMBS.Fileset import Fileset
-from WMCore.WMBS.Job import Job
-from WMCore.WMBS.JobGroup import JobGroup
 from WMCore.WMBS.Subscription import Subscription
 from WMCore.WMBS.Workflow import Workflow
 
 from WMCore.DataStructs.Run import Run
 
 from WMCore.DAOFactory import DAOFactory
-from WMCore.WMFactory import WMFactory
 from WMCore.JobSplitting.SplitterFactory import SplitterFactory
-from WMCore.Services.UUID import makeUUID
 from WMQuality.TestInit import TestInit
 
 class ParentlessMergeBySizeTest(unittest.TestCase):
@@ -166,28 +161,6 @@ class ParentlessMergeBySizeTest(unittest.TestCase):
 
         return
 
-    def testMinMergeSize1(self):
-        """
-        _testMinMergeSize1_
-
-        Set the minimum merge size to be 20,000 bytes which is more than the
-        sum of all file sizes in the WMBS instance.  Verify that no merge jobs
-        will be produced.
-        """
-        self.stuffWMBS()
-
-        splitter = SplitterFactory()
-        jobFactory = splitter(package = "WMCore.WMBS",
-                              subscription = self.mergeSubscription)
-
-        result = jobFactory(min_merge_size = 200000, max_merge_size = 2000000000,
-                            max_merge_events = 200000000)
-
-        assert len(result) == 0, \
-               "ERROR: No job groups should be returned."
-
-        return
-
     def testMinMergeSize1a(self):
         """
         _testMinMergeSize1a_
@@ -211,6 +184,8 @@ class ParentlessMergeBySizeTest(unittest.TestCase):
 
         assert len(result[0].jobs) == 1, \
                "Error: One job should have been returned: %s" % len(result[0].jobs)
+
+        self.assertEqual(result[0].jobs[0]["estimatedDiskUsage"], 10 + 100)
 
         goldenFiles = ["file1", "file2", "file3", "file4", "fileA", "fileB",
                       "fileC", "fileI", "fileII", "fileIII", "fileIV"]
@@ -287,8 +262,10 @@ class ParentlessMergeBySizeTest(unittest.TestCase):
             jobFiles = job.getFiles()
 
             if jobFiles[0]["lfn"] in goldenFilesA:
+                self.assertEqual(job["estimatedDiskUsage"], 10)
                 goldenFiles = goldenFilesA
             elif jobFiles[0]["lfn"] in goldenFilesB:
+                self.assertEqual(job["estimatedDiskUsage"], 100)
                 goldenFiles = goldenFilesB
 
             currentRun = 0
@@ -362,8 +339,10 @@ class ParentlessMergeBySizeTest(unittest.TestCase):
             jobFiles = job.getFiles()
 
             if jobFiles[0]["lfn"] in goldenFilesA:
+                self.assertEqual(job["estimatedDiskUsage"], 9 + 100)
                 goldenFiles = goldenFilesA
             elif jobFiles[0]["lfn"] in goldenFilesB:
+                self.assertEqual(job["estimatedDiskUsage"], 1)
                 goldenFiles = goldenFilesB
 
             currentRun = 0
@@ -477,8 +456,10 @@ class ParentlessMergeBySizeTest(unittest.TestCase):
 
             jobLFNs.sort()
             if jobLFNs == goldenFilesA:
+                self.assertEqual(job["estimatedDiskUsage"], 7)
                 goldenFilesA = []
             else:
+                self.assertEqual(job["estimatedDiskUsage"], 3 + 100)
                 self.assertEqual(jobLFNs, goldenFilesB,
                                  "Error: LFNs do not match.")
                 goldenFilesB = []
@@ -518,10 +499,13 @@ class ParentlessMergeBySizeTest(unittest.TestCase):
             jobFiles = job.getFiles()
 
             if jobFiles[0]["lfn"] in goldenFilesA:
+                self.assertEqual(job["estimatedDiskUsage"], 7)
                 goldenFiles = goldenFilesA
             elif jobFiles[0]["lfn"] in goldenFilesB:
+                self.assertEqual(job["estimatedDiskUsage"], 3)
                 goldenFiles = goldenFilesB
             else:
+                self.assertEqual(job["estimatedDiskUsage"], 100)
                 goldenFiles = goldenFilesC
 
             currentRun = 0
@@ -594,10 +578,13 @@ class ParentlessMergeBySizeTest(unittest.TestCase):
             jobFiles = job.getFiles()
 
             if jobFiles[0]["lfn"] in goldenFilesA:
+                self.assertEqual(job["estimatedDiskUsage"], 7)
                 goldenFiles = goldenFilesA
             elif jobFiles[0]["lfn"] in goldenFilesB:
+                self.assertEqual(job["estimatedDiskUsage"], 2 + 100)
                 goldenFiles = goldenFilesB
             else:
+                self.assertEqual(job["estimatedDiskUsage"], 1)
                 goldenFiles = goldenFilesC
 
             currentRun = 0
@@ -649,10 +636,10 @@ class ParentlessMergeBySizeTest(unittest.TestCase):
         self.stuffWMBS()
 
         locationAction = self.daoFactory(classname = "Locations.New")
-        locationAction.execute(siteName = "s2", seName = "somese2.cern.ch")
+        locationAction.execute(siteName = "s3", seName = "somese3.cern.ch")
 
         fileSite2 = File(lfn = "fileSite2", size = 4098, events = 1024,
-                         first_event = 0, locations = set(["somese2.cern.ch"]))
+                         first_event = 0, locations = set(["somese3.cern.ch"]))
         fileSite2.addRun(Run(1, *[46]))
         fileSite2.create()
 

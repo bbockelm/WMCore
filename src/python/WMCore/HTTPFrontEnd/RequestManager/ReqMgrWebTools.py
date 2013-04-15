@@ -10,10 +10,9 @@ from xml.dom.minidom import parse as parseDOM
 from xml.parsers.expat import ExpatError
 from cherrypy import HTTPError
 from cherrypy.lib.static import serve_file
-from httplib import HTTPException
 import WMCore.Lexicon
+from WMCore.Database.CMSCouch import Database
 import cgi
-from WMCore.WMSpec.WMWorkload import WMWorkloadHelper
 import WMCore.RequestManager.RequestDB.Settings.RequestStatus             as RequestStatus
 import WMCore.RequestManager.RequestDB.Interface.Request.ChangeState      as ChangeState
 import WMCore.RequestManager.RequestDB.Interface.Request.GetRequest       as GetRequest
@@ -230,17 +229,27 @@ def removePasswordFromUrl(url):
         result = url[:slashslashat+2] + url[atat+1:]
     return result
 
+
 def changePriority(requestName, priority, wmstatUrl = None):
-    """ Changes the priority that's stored in the workload """
-    # fill in all details
-    request = GetRequest.getRequestByName(requestName)
-    groupPriority = request.get('ReqMgrGroupBasePriority', 0)
-    userPriority  = request.get('ReqMgrRequestorBasePriority', 0)
-    ChangeState.changeRequestPriority(requestName, priority)
+    """
+    Changes the priority that's stored in the workload.
+    Takes the current priority stored in the workload and adds
+    to it the input priority value. 
+    
+    """
+    request = requestDetails(requestName)
+    # change in Oracle
+    newPrior = int(priority)
+    ChangeState.changeRequestPriority(requestName, newPrior)
+    # change in workload (spec)
     helper = loadWorkload(request)
-    totalPriority = int(priority) + int(userPriority) + int(groupPriority)
-    helper.data.request.priority = totalPriority
+    helper.data.request.priority = newPrior
     saveWorkload(helper, request['RequestWorkflow'], wmstatUrl)
+    # change priority in CouchDB
+    couchDb = Database(request["CouchWorkloadDBName"], request["CouchURL"])
+    fields = {"RequestPriority": newPrior}
+    couchDb.updateDocument(requestName, "ReqMgr", "updaterequest", fields=fields) 
+    
 
 def abortRequest(requestName):
     """ Changes the state of the request to "aborted", and asks the work queue
@@ -291,7 +300,7 @@ def privileged():
 
     #FIXME doesn't check role in this specific site
     secure_roles = [role for role in cherrypy.request.user['roles'].keys() if role in security_roles()]
-    # and maybe we're running without securitya, in which case dn = 'None'
+    # and maybe we're running without security, in which case dn = 'None'
     return secure_roles != []
 
 def changeStatus(requestName, status, wmstatUrl):
@@ -313,12 +322,15 @@ def changeStatus(requestName, status, wmstatUrl):
         elif not privileged():
             raise cherrypy.HTTPError(403, "You are not allowed to change the state for this request")
         # delete from the workqueue if it's been assigned to one
-        if oldStatus in ["acquired", "running"]:
+        if oldStatus in ["acquired", "running", "running-closed", "running-open"]:
             abortRequest(requestName)
         else:
             raise cherrypy.HTTPError(400, "You cannot abort a request in state %s" % oldStatus)
-    #FIXME needs logic about who is allowed to do which transition
-    ChangeState.changeRequestStatus(requestName, status, wmstatUrl = wmstatUrl)
+        
+    # finally, perform the transition, have to do it in both Oracle and CouchDB
+    # and in WMStats
+    ChangeState.changeRequestStatus(requestName, status, wmstatUrl=wmstatUrl)        
+
 
 def prepareForTable(request):
     """ Add some fields to make it easier to display a request """
@@ -354,9 +366,8 @@ def requestsWhichCouldLeadTo(newStatus):
 
 def priorityMenu(request):
     """ Returns HTML for a box to set priority """
-    return '(%iu, %ig) %i &nbsp<input type="text" size=2 name="%s:priority" />' % (
-            request['ReqMgrRequestorBasePriority'], request['ReqMgrGroupBasePriority'],
-            request['ReqMgrRequestBasePriority'],
+    return ' %i &nbsp<input type="text" size=2 name="%s:priority" />' % (
+            request['RequestPriority'],
             request['RequestName'])
 
 def sites(siteDbUrl):
@@ -450,25 +461,29 @@ def buildWorkloadAndCheckIn(webApi, reqSchema, couchUrl, couchDB, wmstatUrl, clo
         raise HTTPError(400, "Error in Workload Validation: %s" % ex._message)
     
     helper = WMWorkloadHelper(request['WorkloadSpec'])
+    
+    #4378 - ACDC (Resubmission) requests should inherit the Campaign ...
+    # for Resubmission request, there already is previous Campaign set
+    # this call would override it with initial request arguments where
+    # it is not specified, so would become ''
+    if not helper.getCampaign():
+        helper.setCampaign(reqSchema["Campaign"])
+    
+    # update request as well for wmstats update
+    # there is a better way to do this (passing helper to request but make sure all the information is there) 
+    request["Campaign"] = helper.getCampaign()
         
-    helper.setCampaign(reqSchema["Campaign"])
-    if "CustodialSite" in reqSchema.keys():
-        helper.setCustodialSite(siteName = reqSchema['CustodialSite'])
-    elif len(reqSchema.get("SiteWhitelist", [])) == 1:
-        # If there is only one site in the site whitelist we should
-        # set it as the custodial site.
-        # Oli says so.
-        helper.setCustodialSite(siteName = reqSchema['SiteWhitelist'][0])
     if "RunWhitelist" in reqSchema:
         helper.setRunWhitelist(reqSchema["RunWhitelist"])
         
     # can't save Request object directly, because it makes it hard to retrieve the _rev
     metadata = {}
-    metadata.update(request)
+    metadata.update(request)    
     
     # Add the output datasets if necessary
     # for some bizarre reason OutpuDatasets is list of lists, when cloning
     # [['/MinimumBias/WMAgentCommissioning10-v2/RECO'], ['/MinimumBias/WMAgentCommissioning10-v2/ALCARECO']]
+    # #3743
     if not clone:
         for ds in helper.listOutputDatasets():
             if ds not in request['OutputDatasets']:
@@ -483,7 +498,36 @@ def buildWorkloadAndCheckIn(webApi, reqSchema, couchUrl, couchDB, wmstatUrl, clo
     except CheckIn.RequestCheckInError, ex:
         msg = ex._message
         raise HTTPError(400, "Error in Request check-in: %s" % msg)
+        
+    # Inconsistent request parameters between Oracle and Couch (#4380, #4388)
+    # metadata above is what is saved into couch to represent a request document.
+    # Number of request arguments on a corresponding couch document
+    # is not set, has default null/None values, update those accordingly now.
+    # It's a mess to have two mutually inconsistent database backends.
+    # Not easy to handle this earlier since couch is stored first and
+    # some parameters are worked out later when storing into Oracle.
+    reqDetails = requestDetails(request["RequestName"])
+    # couchdb request parameters which are null at the injection time and remain so
+    paramsToUpdate = ["RequestStatus",
+                      "RequestSizeFiles",
+                      "AcquisitionEra",
+                      "RequestWorkflow",
+                      "RequestType",
+                      "RequestStatus",
+                      "RequestPriority",
+                      "Requestor",
+                      "Group",
+                      "SizePerEvent",
+                      "PrepID",
+                      "RequestNumEvents",
+                      ]
     
+    couchDb = Database(reqDetails["CouchWorkloadDBName"], reqDetails["CouchURL"])
+    fields = {}
+    for key in paramsToUpdate:
+        fields[key] = reqDetails[key]
+    couchDb.updateDocument(request["RequestName"], "ReqMgr", "updaterequest", fields=fields) 
+        
     try:
         wmstatSvc = WMStatsWriter(wmstatUrl)
         wmstatSvc.insertRequest(request)
@@ -514,6 +558,7 @@ def makeRequest(webApi, reqInputArgs, couchUrl, couchDB, wmstatUrl):
     # values in the schema definition
     
     reqSchema["Campaign"] = reqInputArgs.get("Campaign", "")
+    
     if 'ProcScenario' in reqInputArgs and 'ConfigCacheID' in reqInputArgs:
         # Use input mode to delete the unused one
         inputMode = reqInputArgs.get('inputMode', None)
@@ -535,6 +580,10 @@ def makeRequest(webApi, reqInputArgs, couchUrl, couchDB, wmstatUrl):
         d["SkimName"] = reqInputArgs["SkimName%s" % skimNumber]
         d["SkimInput"] = reqInputArgs["SkimInput%s" % skimNumber]
         d["Scenario"] = reqInputArgs["Scenario"]
+        d["TimePerEvent"] = reqInputArgs.get("SkimTimePerEvent%s" % skimNumber, None)
+        d["SizePerEvent"] = reqInputArgs.get("SkimSizePerEvent%s" % skimNumber, None)
+        d["Memory"] = reqInputArgs.get("SkimMemory%s" % skimNumber, None)
+
 
         if reqInputArgs.get("Skim%sConfigCacheID" % skimNumber, None) != None:
             d["ConfigCacheID"] = reqInputArgs["Skim%sConfigCacheID" % skimNumber]
@@ -555,10 +604,9 @@ def makeRequest(webApi, reqInputArgs, couchUrl, couchDB, wmstatUrl):
     for blocklist in ["BlockWhitelist", "BlockBlacklist"]:
         if blocklist in reqInputArgs:
             reqSchema[blocklist] = parseBlockList(reqInputArgs[blocklist])
-    if "DqmSequences" in reqInputArgs:
-        reqSchema["DqmSequences"] = parseStringListWithoutValidation(reqInputArgs["DqmSequences"])
-    if "IgnoredOutputModules" in reqInputArgs:
-        reqSchema["IgnoredOutputModules"] = parseStringListWithoutValidation(reqInputArgs["IgnoredOutputModules"])
+    for stringList in ["DqmSequences", "IgnoredOutputModules", "TransientOutputModules"]:
+        if stringList in reqInputArgs:
+            reqSchema[stringList] = parseStringListWithoutValidation(reqInputArgs[stringList])
 
     validate(reqSchema)
 
@@ -584,10 +632,20 @@ def requestDetails(requestName):
     schema['UnmergedLFNBase'] = str(helper.getUnmergedLFNBase())
     schema['Campaign']        = str(helper.getCampaign()) 
     schema['AcquisitionEra']  = str(helper.getAcquisitionEra())
-    schema['CustodialSite']   = str(helper.getCustodialSite())
     if schema['SoftwareVersions'] == ['DEPRECATED']:
         schema['SoftwareVersions'] = helper.getCMSSWVersions()
+
+    # Check in the CouchWorkloadDBName if not present
+    schema.setdefault("CouchWorkloadDBName", "reqmgr_workload_cache")
+
+    # get DbsUrl from CouchDB
+    if schema.get("CouchWorkloadDBName", None) and schema.get("CouchURL", None):
+        couchDb = Database(schema["CouchWorkloadDBName"], schema["CouchURL"])
+        couchReq = couchDb.document(requestName)
+        schema["DbsUrl"] = couchReq.get("DbsUrl", None)
+        
     return schema
+
 
 def serveFile(contentType, prefix, *args):
     """Return a workflow from the cache"""

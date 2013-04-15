@@ -1,5 +1,18 @@
 WMStats.namespace("Utils");
 
+    /* simple function to clone obj only works with no prototype */
+WMStats.Utils.cloneObj = function(sourceObj) {
+        if (typeof sourceObj === "object"){
+            var newObj = sourceObj.constructor();
+            for (var prop in sourceObj) {
+                newObj[prop] = WMStats.Utils.cloneObj(sourceObj[prop]);
+            }
+            return newObj;
+        } else {
+            return sourceObj;
+        }
+    };
+    
 WMStats.Utils.updateObj = function (baseObj, additionObj, createFlag, updateFunc) {
    /*
     * update baseObj using additonObj.
@@ -13,11 +26,11 @@ WMStats.Utils.updateObj = function (baseObj, additionObj, createFlag, updateFunc
    for (var field in additionObj) {
         if (!baseObj[field]) {
             if (createFlag === undefined || createFlag) {
-                baseObj[field] = additionObj[field];
+                baseObj[field] = WMStats.Utils.cloneObj(additionObj[field]);
             }
         } else {
             if (typeof(baseObj[field]) == "object"){
-                WMStats.Utils.updateObj(baseObj[field], additionObj[field], updateFunc);
+                WMStats.Utils.updateObj(baseObj[field], additionObj[field], createFlag, updateFunc);
             } else {
                 if (updateFunc instanceof Function){
                     updateFunc(baseObj, additionObj, field);
@@ -54,14 +67,17 @@ WMStats.Utils.get = function (baseObj, objStr, val) {
 
 WMStats.Utils.formatReqDetailUrl = function (request) {
     return '<a href="' + WMStats.Globals.REQ_DETAIL_URL_PREFIX + 
-            encodeURIComponent(request) + '" target="_blank">' + request + '</a>';
+            encodeURIComponent(request) + '" target="requestDetailFrame">' + request + '</a>';
 }
 
 WMStats.Utils.formatWorkloadSummarylUrl = function (request, status) {
-    if (status == "completed" || status == "announced" ||
-        status == "closed-out" || status == "archived") {
+    if (status === undefined) {
         return '<a href="' + WMStats.Globals.WORKLOAD_SUMMARY_URL_PREFIX + 
-                encodeURIComponent(request) + '" target="_blank">' + status + '</a>';
+                encodeURIComponent(request) + '" target="workloadSummaryFrame">' + request + '</a>';
+    } else if (status == "completed" || status == "announced" ||
+        status == "closed-out" || status.indexOf("archived") !== -1) {
+        return '<a href="' + WMStats.Globals.WORKLOAD_SUMMARY_URL_PREFIX + 
+                encodeURIComponent(request) + '" target="workloadSummaryFrame">' + status + '</a>';
     } else {
         return status;
     }
@@ -89,4 +105,103 @@ WMStats.Utils.createInputFilter = function (selector) {
             filter[obj.name] = obj.value;
         });
     return filter;
+}
+
+WMStats.Utils.formatDetailButton = function (name) {
+    return '<div class="detailButton" name="'+ name + '"></div>';
+}
+
+
+WMStats.Utils.utcClock = function(date) {
+    
+    function appendZero(num) {
+        if (num < 10) {
+            return "0" + num;
+        }
+        return num
+    }
+    var day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    var now;
+    if (date === undefined) {
+        now = new Date(); 
+    }else {
+        now = date;
+    }
+    var month =  now.getUTCMonth() + 1;
+    var utcString = now.getUTCFullYear() + "/" + month + "/" + 
+                    now.getUTCDate() + " (" + day[now.getUTCDay()] + ") " +
+                    appendZero(now.getUTCHours())  + ":" + appendZero(now.getUTCMinutes()) + ":" +
+                    appendZero(now.getUTCSeconds()) + " UTC";
+    return utcString;
+};
+
+WMStats.Utils.expandFormat = function(dataArray, summaryStr, formatFunc) {
+    var htmlstr = "";
+    if (dataArray == undefined || typeof (dataArray) !== "object" || dataArray.length == 0) {
+        htmlstr +=  "<strong>" +  summaryStr + ":</strong>";
+     } else {
+        htmlstr += "<details> <summary><strong>" + summaryStr +"</strong></summary><ul>";
+        if (formatFunc === undefined) {
+            formatFunc = function(x) {return x};
+        }
+        for (var i in dataArray) {
+            htmlstr += "<li>" + formatFunc(dataArray[i], i) + "</li>";
+        }
+        htmlstr += "</ul></details>";
+    }
+    return htmlstr;
+}
+
+
+WMStats.Utils.largeNumberFormat = function(number) {
+    var mega = 1000000;
+    var giga = 1000000000;
+    if (number < mega) {
+        return number;
+    } else if (number < giga) {
+        return (number/mega).toFixed(1) + " M";
+    } else {
+        return (number/giga).toFixed(1) + " G";
+    }
+}
+
+WMStats.Utils.splitCouchServiceURL = function(url) {
+    var urlArray = url.split('/');
+    return {'couchUrl': urlArray.slice(0, -1).join('/'), 'couchdb': urlArray[urlArray.length - 1]}
+}
+
+
+WMStats.Utils.acdcRequestSting = function(originalRequest, requestor) {
+    var stripRequestor = originalRequest.replace(new RegExp('^'+ requestor), "ACDC");
+    return stripRequestor.replace(/_\d+_\d+_\d+$/, "");
+}
+
+WMStats.Utils.contains = function(value, container) {
+    //container is object or array
+    if (container.constructor.name === "Array") {
+        for (var index in container) {
+            if (value == container[index]) {
+                return index;
+            }
+        }
+        return -1;
+    }
+    
+    if (container.constructor.name === "Object") {
+        for (var index in container) {
+            if (value == index) {
+                return index;
+            }
+        }
+        return -1;
+    }
+}
+
+WMStats.Utils.addToSet = function(array, value) {
+    if (WMStats.Utils.contains(value, array) === -1) {
+        array.push(value);
+        return true;
+    } else {
+        return false;
+    }
 }

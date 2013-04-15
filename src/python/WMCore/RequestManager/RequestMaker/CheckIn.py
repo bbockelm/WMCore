@@ -44,7 +44,7 @@ def _raiseCheckInError(request, ex, msg):
         if oldReqId != reqId:
             raise RequestCheckInError("Bad state deleting request %s/%s.  Please contact a ReqMgr administrator" % (oldReqId/ reqId))
         else:
-            RequestAdmin.deleteRequest(reqId)
+            RequestAdmin.deleteRequest(requestName)
     # get information about the last exception
     trace = traceback.format_exception(*sys.exc_info())
     traceString = ''.join(trace)
@@ -90,7 +90,8 @@ def checkIn(request, requestType = 'None'):
         requestName,
         request['RequestType'],
         request['RequestWorkflow'],
-        request.get('PrepID', None)
+        request.get('PrepID', None),
+        request.get('RequestPriority', None)
     )
     except Exception, ex:
         msg = "Error creating new request:\n"
@@ -137,11 +138,10 @@ def checkIn(request, requestType = 'None'):
     except Exception, ex:
         _raiseCheckInError(request, ex, "Unable to associate software for this request")
 
-    if request["RequestNumEvents"] != None:
-        MakeRequest.updateRequestSize(requestName, request["RequestNumEvents"],
-                                      request.get("RequestSizeFiles", 0),
-                                      request.get("RequestEventSize", 0)
-                                      )
+    MakeRequest.updateRequestSize(requestName, request.get("RequestNumEvents", 0),
+                                  request.get("RequestSizeFiles", 0),
+                                  request.get("SizePerEvent", 0))
+        
     campaign = request.get("Campaign", "")
     if campaign != "" and campaign != None:
         Campaign.associateCampaign(campaign, reqId)

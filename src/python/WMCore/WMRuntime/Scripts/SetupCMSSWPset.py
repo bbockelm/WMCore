@@ -500,6 +500,8 @@ class SetupCMSSWPset(ScriptInterface):
 
     def handleProducersNumberOfEvents(self):
         """
+        _handleProducersNumberOfEvents_
+
         Some producer modules are initialized with a maximum number of events
         to be generated, usually based on the process.maxEvents.input attribute
         but after that is tweaked the producers number of events need to
@@ -511,6 +513,25 @@ class SetupCMSSWPset(ScriptInterface):
             if hasattr(producers[producer], "nEvents"):
                 producers[producer].nEvents = cms.uint32(
                                         self.process.maxEvents.input.value())
+
+    def handleDQMFileSaver(self):
+        """
+        _handleDQMFileSaver_
+
+        Harvesting jobs have the dqmFileSaver EDAnalyzer that must
+        be tweaked with the dataset name in order to store it
+        properly in the DQMGUI, others tweaks can be added as well
+        """
+        baggage = self.job.getBaggage()
+        runIsComplete = getattr(baggage, "runIsComplete", False)
+        if hasattr(self.process, "dqmSaver"):
+            self.process.dqmSaver.runIsComplete = cms.untracked.bool(runIsComplete)
+            if hasattr(self.step.data.application.configuration, "pickledarguments"):
+                args = pickle.loads(self.step.data.application.configuration.pickledarguments)
+                datasetName = args.get('datasetName', None)
+                if datasetName is not None:
+                    self.process.dqmSaver.workflow = cms.untracked.string(datasetName)
+        return
 
     def __call__(self):
         """
@@ -589,6 +610,9 @@ class SetupCMSSWPset(ScriptInterface):
 
         # check for event numbers in the producers
         self.handleProducersNumberOfEvents()
+
+        # fixup the dqmFileSaver
+        self.handleDQMFileSaver()
 
         #Apply events per lumi section if available
         if hasattr(self.step.data.application.configuration, "eventsPerLumi"):

@@ -11,7 +11,7 @@ from WMCore.WorkQueue.Policy.Start.StartPolicyInterface import StartPolicyInterf
 from copy import deepcopy
 from math import ceil
 from WMCore.WorkQueue.WorkQueueExceptions import WorkQueueWMSpecError
-from WMCore.WorkQueue.WorkQueueUtils import sitesFromStorageEelements
+from WMCore.WorkQueue.WorkQueueUtils import sitesFromStorageEelements, makeLocationsList
 from WMCore import Lexicon
 
 class Block(StartPolicyInterface):
@@ -21,6 +21,12 @@ class Block(StartPolicyInterface):
         self.args.setdefault('SliceType', 'NumberOfFiles')
         self.args.setdefault('SliceSize', 1)
         self.lumiType = "NumberOfLumis"
+
+        # Initialize a list of sites where the data is
+        self.sites = []
+
+        # Initialize modifiers of the policy
+        self.blockBlackListModifier = []
 
     def split(self):
         """Apply policy to spec"""
@@ -33,7 +39,10 @@ class Block(StartPolicyInterface):
             if self.initialTask.parentProcessingFlag():
                 parentFlag = True
                 for dbsBlock in dbs.listBlockParents(block["block"]):
-                    parentList[dbsBlock["Name"]] = sitesFromStorageEelements(dbsBlock['StorageElementList'])
+                    if self.initialTask.inputLocationFlag():
+                        parentList[dbsBlock["Name"]] = self.sites
+                    else:
+                        parentList[dbsBlock["Name"]] = sitesFromStorageEelements(dbsBlock['StorageElementList'])
 
             self.newQueueElement(Inputs = {block['block'] : self.data.get(block['block'], [])},
                                  ParentFlag = parentFlag,
@@ -43,7 +52,8 @@ class Block(StartPolicyInterface):
                                  NumberOfEvents = int(block['NumberOfEvents']),
                                  Jobs = ceil(float(block[self.args['SliceType']]) /
                                              float(self.args['SliceSize'])),
-                                 OpenForNewData = True if str(block.get('OpenForWriting')) == '1' else False
+                                 OpenForNewData = True if str(block.get('OpenForWriting')) == '1' else False,
+                                 NoLocationUpdate = self.initialTask.inputLocationFlag()
                                  )
 
 
@@ -65,6 +75,11 @@ class Block(StartPolicyInterface):
         runBlackList = task.inputRunBlacklist()
         if task.getLumiMask(): #if we have a lumi mask get only the relevant blocks
             maskedBlocks = self.getMaskedBlocks(task, dbs, datasetPath)
+        if task.inputLocationFlag():
+            # Then get the locations from the site whitelist/blacklist + SiteDB
+            siteWhitelist = task.siteWhitelist()
+            siteBlacklist = task.siteBlacklist()
+            self.sites = makeLocationsList(siteWhitelist, siteBlacklist)
 
         blocks = []
         # Take data inputs or from spec
@@ -81,9 +96,8 @@ class Block(StartPolicyInterface):
                 blocks.append(str(data))
             else:
                 Lexicon.dataset(data) # check dataset name
-                for block in dbs.listFileBlocks(data):
+                for block in dbs.listFileBlocks(data, onlyClosedBlocks = True):
                     blocks.append(str(block))
-
 
         for blockName in blocks:
             # check block restrictions
@@ -91,13 +105,18 @@ class Block(StartPolicyInterface):
                 continue
             if blockName in blockBlackList:
                 continue
+            if blockName in self.blockBlackListModifier:
+                # Don't duplicate blocks rejected before or blocks that were included and therefore are now in the blacklist
+                continue
             if task.getLumiMask() and blockName not in maskedBlocks:
+                self.rejectedWork.append(blockName)
                 continue
 
             block = dbs.getDBSSummaryInfo(datasetPath, block = blockName)
             # blocks with 0 valid files should be ignored
             # - ideally they would be deleted but dbs can't delete blocks
             if not block['NumberOfFiles'] or block['NumberOfFiles'] == '0':
+                self.rejectedWork.append(blockName)
                 continue
 
             #check lumi restrictions
@@ -106,36 +125,70 @@ class Block(StartPolicyInterface):
                 #use the information given from getMaskedBlocks to compute che size of the block
                 block['NumberOfFiles'] = len(maskedBlocks[blockName])
                 #ratio =  lumis which are ok in the block / total num lumis
-                ratio_accepted = 1. * accepted_lumis / float(block['NumberOfLumis'])
-                block['NumberOfEvents'] = float(block['NumberOfEvents']) * ratio_accepted
+                ratioAccepted = 1. * accepted_lumis / float(block['NumberOfLumis'])
+                block['NumberOfEvents'] = float(block['NumberOfEvents']) * ratioAccepted
                 block[self.lumiType] = accepted_lumis
             # check run restrictions
             elif runWhiteList or runBlackList:
-                # listRuns returns a run number per lumi section
-                full_lumi_list = dbs.listRuns(block = block['block'])
-                runs = set(full_lumi_list)
+                # listRunLumis returns a dictionary with the lumi sections per run
+                runLumis = dbs.listRunLumis(block = block['block'])
+                runs = set(runLumis.keys())
+                recalculateLumiCounts = False
+                if len(runs) > 1:
+                    # If more than one run in the block
+                    # Then we must calculate the lumi counts after filtering the run list
+                    # This has to be done rarely and requires calling DBS file information
+                    recalculateLumiCounts = True
 
                 # apply blacklist
                 runs = runs.difference(runBlackList)
                 # if whitelist only accept listed runs
                 if runWhiteList:
                     runs = runs.intersection(runWhiteList)
-
                 # any runs left are ones we will run on, if none ignore block
                 if not runs:
+                    self.rejectedWork.append(blockName)
                     continue
 
-                # recalculate effective size of block
-                # make a guess for new event/file numbers from ratio
-                # of accepted lumi sections (otherwise have to pull file info)
-                accepted_lumis = [x for x in full_lumi_list if x in runs]
-                ratio_accepted = 1. * len(accepted_lumis) / len(full_lumi_list)
-                block[self.lumiType] = len(accepted_lumis)
-                block['NumberOfFiles'] = float(block['NumberOfFiles']) * ratio_accepted
-                block['NumberOfEvents'] = float(block['NumberOfEvents']) * ratio_accepted
+                if len(runs) == len(runLumis):
+                    # If there is no change in the runs, then we can skip recalculating lumi counts
+                    recalculateLumiCounts = False
 
+                if recalculateLumiCounts:
+                    # Recalculate effective size of block
+                    # We pull out file info, since we don't do this often
+                    acceptedLumiCount = 0
+                    acceptedEventCount = 0
+                    acceptedFileCount = 0
+                    fileInfo = dbs.listFilesInBlock(fileBlockName = block['block'])
+                    for fileEntry in fileInfo:
+                        acceptedFile = False
+                        acceptedFileLumiCount = 0
+                        for lumiInfo in fileEntry['LumiList']:
+                            runNumber = lumiInfo['RunNumber']
+                            if runNumber in runs:
+                                acceptedFile = True
+                                acceptedFileLumiCount += 1
+                        if acceptedFile:
+                            acceptedFileCount += 1
+                            acceptedLumiCount += acceptedFileLumiCount
+                            if len(fileEntry['LumiList']) != acceptedFileLumiCount:
+                                acceptedEventCount += float(acceptedFileLumiCount) * fileEntry['NumberOfEvents']/len(fileEntry['LumiList'])
+                            else:
+                                acceptedEventCount += fileEntry['NumberOfEvents']
+                    block[self.lumiType] = acceptedLumiCount
+                    block['NumberOfFiles'] = acceptedFileCount
+                    block['NumberOfEvents'] = acceptedEventCount
             # save locations
-            self.data[block['block']] = sitesFromStorageEelements(dbs.listFileBlockLocation(block['block']))
+            if task.inputLocationFlag():
+                self.data[block['block']] = self.sites
+            else:
+                self.data[block['block']] = sitesFromStorageEelements(dbs.listFileBlockLocation(block['block']))
+
+            if not self.data[block['block']]:
+                # No sites for this block, move it to rejected
+                self.rejectedWork.append(blockName)
+                continue
 
             validBlocks.append(block)
         return validBlocks
@@ -179,3 +232,34 @@ class Block(StartPolicyInterface):
                 if int(section[0]) <= int(lumi) <= int(section[1]):
                     return True
         return False
+
+    def modifyPolicyForWorkAddition(self, inboxElement):
+        """
+            A block blacklist modifier will be created,
+            this policy object will split excluding the blocks in both the spec
+            blacklist and the blacklist modified
+        """
+        # Get the already processed input blocks from the inbox element
+        existingBlocks = inboxElement.get('ProcessedInputs', [])
+        self.blockBlackListModifier = existingBlocks
+        self.blockBlackListModifier.extend(inboxElement.get('RejectedInputs', []))
+        return
+
+    def newDataAvailable(self, task, inbound):
+        """
+            In the case of the block policy, the new data available
+            returns True if it finds at least one open block.
+        """
+        self.initialTask = task
+        dbs = self.dbs()
+        openBlocks = dbs.listOpenFileBlocks(task.getInputDatasetPath())
+        if openBlocks:
+            return True
+        return False
+
+    @staticmethod
+    def supportsWorkAddition():
+        """
+            Block start policy supports continuous addition of work
+        """
+        return True

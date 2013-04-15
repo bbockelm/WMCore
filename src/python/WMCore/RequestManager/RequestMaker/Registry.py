@@ -114,8 +114,12 @@ def buildWorkloadForRequest(typename, schema):
     #    this is not now screwed up
     if schema.get('CMSSWVersion') and schema.get('CMSSWVersion') not in request['SoftwareVersions']:
         request['SoftwareVersions'].append(schema.get('CMSSWVersion'))
-    # assume only one dbs for all the task
-    request['DbsUrl'] = (workload.getTopLevelTask()[0]).dbsUrl()
+
+    if schema.get("DbsUrl", None):
+        request["DbsUrl"] = schema["DbsUrl"]
+    else:
+        request["DbsUrl"] = (workload.getTopLevelTask()[0]).dbsUrl()
+        
     return request
 
 

@@ -140,6 +140,35 @@ class DBS3Reader:
         [runs.extend(x['run_num']) for x in results]
         return runs
 
+    def listRunLumis(self, dataset = None, block = None):
+        """
+        It gets a list of DBSRun objects and returns the number of lumisections per run
+        DbsRun (RunNumber,
+                NumberOfEvents,
+                NumberOfLumiSections,
+                TotalLuminosity,
+                StoreNumber,
+                StartOfRungetLong,
+                EndOfRun,
+                CreationDate,
+                CreatedBy,
+                LastModificationDate,
+                LastModifiedBy
+                )
+        """
+        try:
+            if block:
+                results = self.dbs.listRuns(block = block)
+            else:
+                results = self.dbs.listRuns(dataset = dataset)
+        except DbsException, ex:
+            msg = "Error in DBSReader.listRuns(%s, %s)\n" % (dataset, block)
+            msg += "%s\n" % formatEx(ex)
+            raise DBSReaderError(msg)
+
+        return dict((x["run_num"], x["num_lumi"])
+                    for x in results)
+
     def listProcessedDatasets(self, primary, dataTier = '*'):
         """
         _listProcessedDatasets_
@@ -167,6 +196,53 @@ class DBS3Reader:
 
         """
         return [ x['logical_file_name'] for x in self.dbs.listFiles(dataset = datasetPath)]
+
+    def listDatasetFileDetails(self, datasetPath, getParents=False):
+        """
+        _listDatasetFileDetails_
+
+        Get list of lumis, events, and parents for each file in a dataset
+        Return a dict where the keys are the files, and for each file we have something like:
+            { 'NumberOfEvents': 545,
+              'BlockName': '/HighPileUp/Run2011A-v1/RAW#dd6e0796-cbcc-11e0-80a9-003048caaace',
+              'Lumis': {173658: [8, 12, 9, 14, 19, 109, 105]},
+              'Parents': [],
+              'Checksums': {'Checksum': '22218315', 'Adler32': 'a41a1446', 'Md5': 'NOTSET'},
+              'Size': 286021145
+            }
+
+        """
+        fileDetails = self.dbs.listFiles(dataset=datasetPath, detail=True)
+        blocks = set() #the set of blocks of the dataset
+        #Iterate over the files and prepare the set of blocks and a dict where the keys are the files
+        files = {}
+        for f in fileDetails:
+            blocks.add(f['block_name'])
+            files[f['logical_file_name']] = {
+                "BlockName" : f['block_name'],
+                "NumberOfEvents" : f['event_count'],
+                "Lumis" : {},
+                "Parents" : [],
+                "Size" : f['file_size'],
+                "Checksums" : {'Adler32': f['adler32'], 'Checksum': f['check_sum'], 'Md5': f['md5']}
+            }
+
+        #Iterate over the blocks and get parents and lumis
+        for blockName in blocks:
+            #get the parents
+            if getParents:
+                parents = self.dbs.listFileParents(block_name=blockName)
+                for p in parents:
+                    files[p['logical_file_name']]['Parents'].extend(p['parent_logical_file_name'])
+            #get the lumis
+            file_lumis = self.dbs.listFileLumis(block_name=blockName)
+            for f in file_lumis:
+                if f['run_num'] in files[f['logical_file_name']]['Lumis']:
+                    files[f['logical_file_name']]['Lumis'][f['run_num']].extend(f['lumi_section_num'])
+                else:
+                    files[f['logical_file_name']]['Lumis'][f['run_num']] = f['lumi_section_num']
+
+        return files
 
 
     def crossCheck(self, datasetPath, *lfns):
@@ -583,6 +659,28 @@ class DBS3Reader:
         pathname = blocks[-1].get('dataset', None)
         return pathname
 
+    def listDatasetLocation(self, dataset):
+        """
+        _listDatasetLocation_
+
+        List the SEs where there is at least a block of the given
+        dataset.
+        """
+        self.checkDatasetPath(dataset)
+        args = {'dataset' : dataset, 'detail' : False}
+        try:
+            blocks = self.dbs.listBlocks(**args)
+        except DbsException, ex:
+            msg = "Error in DBSReader.listFileBlocks(%s)\n" % dataset
+            msg += "%s\n" % formatEx(ex)
+            raise DBSReaderError(msg)
+
+        blockNames = [ x['block_name'] for x in blocks ]
+        locations = set()
+        for blockName in blockNames:
+            locations |= set(self.listFileBlockLocation(blockName))
+
+        return list(locations)
 
     def checkDatasetPath(self, pathName):
         """

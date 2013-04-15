@@ -25,6 +25,7 @@ CouchDB parameters the main request parameters are:
     "Requestor": "sfoulkes@fnal.gov",                 Person responsible
     "GlobalTag": "GR10_P_v4::All",                    Global Tag
     "CouchURL": "http://couchserver.cern.ch",         URL of CouchDB containing ConfigCache (Used for all sub-tasks)
+    "ConfigCacheUrl": https://cmsweb-testbed.cern.ch/couchdb URL of an alternative CouchDB server containing Config documents     
     "CouchDBName": "config_cache",                    Name of Couch Database containing config cache (Used for all sub-tasks)
     "TaskChain" : 4,                                  Define number of tasks in chain.
 }
@@ -204,7 +205,10 @@ class ParameterStorage(object):
                                 'scramArch' : 'ScramArch',
                                 'processingVersion' : 'ProcessingVersion',
                                 'processingString' : 'ProcessingString',
-                                'acquisitionEra' : 'AcquisitionEra'
+                                'acquisitionEra' : 'AcquisitionEra',
+                                'timePerEvent' : 'TimePerEvent',
+                                'sizePerEvent' : 'SizePerEvent',
+                                'memory' : 'Memory'
                                 }
         return
 
@@ -297,6 +301,7 @@ class TaskChainWorkloadFactory(StdBase):
         self.arguments = arguments
         self.couchURL = arguments['CouchURL']
         self.couchDBName = arguments['CouchDBName']
+        self.configCacheUrl = arguments.get("ConfigCacheUrl", None)
         self.frameworkVersion = arguments["CMSSWVersion"]
         self.globalTag = arguments.get("GlobalTag", None)
 
@@ -375,35 +380,32 @@ class TaskChainWorkloadFactory(StdBase):
         splitAlgorithm = taskConf.get('SplittingAlgorithm', 'EventBased')
         splitArguments = taskConf.get('SplittingArguments', {'events_per_job': int((24*3600)/float(self.timePerEvent))})
         keepOutput = taskConf.get('KeepOutput', True)
+        transientModules = taskConf.get('TransientOutputModules', [])
+        forceUnmerged = (not keepOutput) or (len(transientModules) > 0)
 
         self.inputPrimaryDataset = taskConf['PrimaryDataset']
         outputMods = self.setupProcessingTask(task, "Production",
                                               couchURL = self.couchURL, couchDBName = self.couchDBName,
                                               configDoc = configCacheID, splitAlgo = splitAlgorithm,
+                                              configCacheUrl = self.configCacheUrl,
                                               splitArgs = splitArguments, stepType = cmsswStepType,
                                               seeding = taskConf['Seeding'], totalEvents = taskConf['RequestNumEvents'],
-                                              forceUnmerged = not keepOutput)
+                                              forceUnmerged = forceUnmerged)
 
+        # Set up any pileup
         if 'MCPileup' in taskConf or 'DataPileup' in taskConf:
             parsePileupConfig(taskConf)
         if taskConf.get('PileupConfig', None):
             self.setupPileup(task, taskConf['PileupConfig'])
 
         self.addLogCollectTask(task, 'LogCollectFor%s' % task.name())
-        if keepOutput:
-            procMergeTasks = {}
-            for outputModuleName in outputMods.keys():
-                mergeTask = self.addMergeTask(task, taskConf['SplittingAlgorithm'],
-                                              outputModuleName)
-                procMergeTasks[str(outputModuleName)] = mergeTask
-            self.mergeMapping[task.name()] = procMergeTasks
-        else:
-            procTasks = {}
-            for outputModuleName in outputMods:
-                self.addCleanupTask(task, outputModuleName)
-                procTasks[outputModuleName] = task
-            self.mergeMapping[task.name()] = procTasks
-        
+
+        # Do the output module merged/unmerged association
+        self.setUpMergeTasks(task, outputMods, splitAlgorithm,
+                             keepOutput, transientModules)
+
+        return
+
     @ParameterStorage
     def setupTask(self, task, taskConf):
         """
@@ -418,6 +420,8 @@ class TaskChainWorkloadFactory(StdBase):
         splitAlgorithm = taskConf.get('SplittingAlgorithm', 'LumiBased')
         splitArguments = taskConf.get('SplittingArguments', {'lumis_per_job': 8})
         keepOutput     = taskConf.get('KeepOutput', True)
+        transientModules = taskConf.get('TransientOutputModules', [])
+        forceUnmerged = (not keepOutput) or (len(transientModules) > 0)
 
         # in case the initial task is a processing task, we have an input dataset, otherwise
         # we look up the parent task and step
@@ -434,7 +438,7 @@ class TaskChainWorkloadFactory(StdBase):
             inputTaskConf = self.taskMapping[inputTask]
             parentTaskForMod = self.mergeMapping[inputTask][taskConf['InputFromOutputModule']]
             inpStep = parentTaskForMod.getStep("cmsRun1")
-            if not inputTaskConf.get('KeepOutput', True):
+            if not inputTaskConf.get('KeepOutput', True) or len(inputTaskConf.get('TransientOutputModules', [])) > 0:
                 inpMod = taskConf['InputFromOutputModule']
                 # Check if the splitting has to be changed
                 if inputTaskConf.get('SplittingAlgorithm', 'LumiBased') == 'EventBased' \
@@ -463,9 +467,10 @@ class TaskChainWorkloadFactory(StdBase):
         outputMods = self.setupProcessingTask(task, "Processing", inputDataset, inputStep = inpStep, inputModule = inpMod,
                                               scenarioName = self.procScenario, scenarioFunc = scenarioFunc, scenarioArgs = scenarioArgs,
                                               couchURL = couchUrl, couchDBName = couchDB,
+                                              configCacheUrl = self.configCacheUrl,
                                               configDoc = configCacheID, splitAlgo = splitAlgorithm,
                                               splitArgs = splitArguments, stepType = cmsswStepType,
-                                              forceUnmerged = not keepOutput)
+                                              forceUnmerged = forceUnmerged)
 
 
         if 'MCPileup' in taskConf or 'DataPileup' in taskConf:
@@ -474,21 +479,41 @@ class TaskChainWorkloadFactory(StdBase):
             self.setupPileup(task, taskConf['PileupConfig'])
 
         self.addLogCollectTask(task, 'LogCollectFor%s' % task.name())
-        if keepOutput:
-            procMergeTasks = {}
-            for outputModuleName in outputMods.keys():
-                mergeTask = self.addMergeTask(task, splitAlgorithm,
-                                              outputModuleName)
-                procMergeTasks[str(outputModuleName)] = mergeTask
-            self.mergeMapping[task.name()] = procMergeTasks
-        else:
-            procTasks = {}
-            for outputModuleName in outputMods:
-                self.addCleanupTask(task, outputModuleName)
-                procTasks[outputModuleName] = task
-            self.mergeMapping[task.name()] = procTasks
+        self.setUpMergeTasks(task, outputMods, splitAlgorithm,
+                             keepOutput, transientModules)
 
         self.inputPrimaryDataset = currentPrimaryDataset
+
+        return
+
+    def setUpMergeTasks(self, parentTask, outputModules, splittingAlgo,
+                        keepOutput, transientOutputModules):
+        """
+        _setUpMergeTasks_
+
+        Set up the required merged tasks according to the following parameters:
+        - KeepOutput : All output modules not in the transient list are merged.
+        - TransientOutputModules : These output modules won't be merged.
+        If not merged then only a cleanup task is created.
+        """
+        modulesToMerge = []
+        unmergedModules = outputModules.keys()
+        if keepOutput:
+            unmergedModules = filter(lambda x : x in transientOutputModules, outputModules.keys())
+            modulesToMerge = filter(lambda x : x not in transientOutputModules, outputModules.keys())
+
+        procMergeTasks = {}
+        for outputModuleName in modulesToMerge:
+            mergeTask = self.addMergeTask(parentTask, splittingAlgo,
+                                          outputModuleName)
+            procMergeTasks[str(outputModuleName)] = mergeTask
+        self.mergeMapping[parentTask.name()] = procMergeTasks
+
+        procTasks = {}
+        for outputModuleName in unmergedModules:
+            self.addCleanupTask(parentTask, outputModuleName)
+            procTasks[outputModuleName] = parentTask
+        self.mergeMapping[parentTask.name()].update(procTasks)
 
         return
 
@@ -509,6 +534,7 @@ class TaskChainWorkloadFactory(StdBase):
             msg = "No tasks present in taskChain!"
             self.raiseValidationException(msg = msg)
 
+        transientMapping = {}
         for i in range(1, numTasks+1):
             taskName = "Task%s" % i
             if not schema.has_key(taskName):
@@ -533,12 +559,25 @@ class TaskChainWorkloadFactory(StdBase):
 
             # Validate the existence of the configCache
             if task.has_key("ConfigCacheID"):
+                configCacheUrl = schema.get("ConfigCacheUrl", None) or schema["CouchURL"]
                 self.validateConfigCacheExists(configID = task['ConfigCacheID'],
-                                               couchURL = schema["CouchURL"],
+                                               couchURL = configCacheUrl,
                                                couchDBName = schema["CouchDBName"],
                                                getOutputModules = True)
-        return
 
+            # Validate the chaining of transient output modules, need to make a copy of the lists
+            transientMapping[task['TaskName']] = [x for x in task.get('TransientOutputModules', [])]
+
+            if i > 1:
+                inputTransientModules = transientMapping[task['InputTask']]
+                if task['InputFromOutputModule'] in inputTransientModules:
+                    inputTransientModules.remove(task['InputFromOutputModule'])
+
+        for task in transientMapping:
+            if transientMapping[task]:
+                msg = "A transient module is not processed by a subsequent task.\n"
+                msg += "This is a malformed task chain workload"
+                self.raiseValidationException(msg)
 
 def taskChainWorkload(workloadName, arguments):
     """
@@ -549,5 +588,3 @@ def taskChainWorkload(workloadName, arguments):
     """
     f = TaskChainWorkloadFactory()
     return f(workloadName, arguments)
-
-

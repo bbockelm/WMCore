@@ -2,7 +2,7 @@ WMStats.namespace('RequestDataList');
 (function() { 
     var format = function (summary) {
         var summaryStruct = summary.summaryStruct
-        htmlstr = "";
+        var htmlstr = "";
         htmlstr += "<div class='requestSummaryBox'>"
         htmlstr += "<ul>";
         htmlstr += "<li> requests: " + summary.summaryStruct.length + "</li>";
@@ -22,4 +22,4 @@ WMStats.namespace('RequestDataList');
     WMStats.RequestDataList = function (data, containerDiv) {
          $(containerDiv).html(format(data));
     }
-})()
+})();

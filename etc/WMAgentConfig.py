@@ -54,9 +54,6 @@ localDBSUrl = "https://cmst0dbs.cern.ch:8443/cms_dbs_prod_tier0_writer/servlet/D
 localDBSVersion = "DBS_2_0_8"
 globalDBSUrl = "https://cmsdbsprod.cern.ch:8443/cms_dbs_prod_global_writer/servlet/DBSServlet"
 globalDBSVersion = "DBS_2_0_8"
-dbsMaxBlockSize = 5000000000000
-dbsMaxBlockFiles = 500
-dbsBlockTimeout = 86400
 
 # Job retry information.  This includes the number of times a job will tried and
 # how long it will sit in cool off.
@@ -137,9 +134,6 @@ config.DBSInterface.DBSUrl = globalDBSUrl
 config.DBSInterface.DBSVersion = localDBSVersion
 config.DBSInterface.globalDBSUrl = globalDBSUrl
 config.DBSInterface.globalDBSVersion = globalDBSVersion
-config.DBSInterface.DBSBlockMaxSize = dbsMaxBlockSize
-config.DBSInterface.DBSBlockMaxFiles = dbsMaxBlockFiles
-config.DBSInterface.DBSBlockMaxTime = dbsBlockTimeout
 config.DBSInterface.MaxFilesToCommit = 200
 config.DBSInterface.doGlobalMigration = False
 
@@ -205,6 +199,8 @@ config.ErrorHandler.componentDir  = config.General.workDir + "/ErrorHandler"
 config.ErrorHandler.logLevel = globalLogLevel
 config.ErrorHandler.maxRetries = maxJobRetries
 config.ErrorHandler.pollInterval = 240
+config.ErrorHandler.readFWJR = True
+config.ErrorHandler.failureExitCodes = [50660, 50661, 50664]
 
 config.component_("RetryManager")
 config.RetryManager.namespace = "WMComponent.RetryManager.RetryManager"
@@ -237,6 +233,10 @@ config.TaskArchiver.useWorkQueue = True
 config.TaskArchiver.workloadSummaryCouchURL = workloadSummaryURL
 config.TaskArchiver.workloadSummaryCouchDBName = workloadSummaryDB
 config.TaskArchiver.histogramKeys = ["PeakValueRss", "PeakValueVsize", "TotalJobTime", "AvgEventTime"]
+config.TaskArchiver.perfPrimaryDatasets = ['SingleMu', 'MuHad', 'MinimumBias']
+config.TaskArchiver.perfDashBoardMinLumi = 50
+config.TaskArchiver.perfDashBoardMaxLumi = 9000
+config.TaskArchiver.dqmUrl = 'https://cmsweb.cern.ch/dqm/dev/'
 config.TaskArchiver.requireCouch  = True
 config.TaskArchiver.uploadPublishInfo = False
 config.TaskArchiver.uploadPublishDir  = None
@@ -247,7 +247,7 @@ config.TaskArchiver.localCouchURL = "%s/%s" % (config.JobStateMachine.couchurl, 
 config.TaskArchiver.localQueueURL = "%s/%s" % (config.WorkQueueManager.couchurl, config.WorkQueueManager.dbname)
 config.TaskArchiver.localWMStatsURL = "%s/%s" % (config.JobStateMachine.couchurl, config.JobStateMachine.jobSummaryDBName)
 config.TaskArchiver.centralWMStatsURL = "Central WMStats URL"
-config.TaskArchiver.DataKeepDays = 1 # delete after a day maybe change to a week
+config.TaskArchiver.DataKeepDays = 0.125 # delete after 3 hours
 config.TaskArchiver.cleanCouchInterval = 60 * 20 # 20 min
 
 config.webapp_('WMBSService')

@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 """
 RequestManager Workload unittest
 
@@ -45,7 +43,7 @@ class ReqMgrWorkloadTest(RESTBaseUnitTest):
         self.couchDBName = "reqmgr_t_0"
         RESTBaseUnitTest.setUp(self)
         self.testInit.setupCouch("%s" % self.couchDBName,
-                                 "GroupUser", "ConfigCache")
+                                 "GroupUser", "ConfigCache", "ReqMgr")
         self.testInit.setupCouch("%s_wmstats" % self.couchDBName,
                                  "WMStats")
         reqMgrHost = self.config.getServerUrl()
@@ -189,7 +187,7 @@ class ReqMgrWorkloadTest(RESTBaseUnitTest):
         self.assertEqual(request['CMSSWVersion'], schema['CMSSWVersion'])
         self.assertEqual(request['Group'], groupName)
         self.assertEqual(request['Requestor'], userName)
-        
+        self.assertEqual(request['DbsUrl'], 'http://cmsdbsprod.cern.ch/cms_dbs_prod_global/servlet/DBSServlet')
 
     @attr('integration')
     def testB_Analysis(self):
@@ -269,7 +267,7 @@ class ReqMgrWorkloadTest(RESTBaseUnitTest):
         self.assertEqual(request['CMSSWVersion'], schema['CMSSWVersion'])
         self.assertEqual(request['Group'], groupName)
         self.assertEqual(request['Requestor'], userName)
-
+        self.assertEqual(request['DbsUrl'], 'http://cmsdbsprod.cern.ch/cms_dbs_prod_global/servlet/DBSServlet')
 
     @attr('integration')
     def testD_ReDigi(self):
@@ -319,7 +317,10 @@ class ReqMgrWorkloadTest(RESTBaseUnitTest):
         self.assertEqual(request['CMSSWVersion'], schema['CMSSWVersion'])
         self.assertEqual(request['Group'], groupName)
         self.assertEqual(request['Requestor'], userName)
-
+        self.assertEqual(request['DbsUrl'], 'http://cmsdbsprod.cern.ch/cms_dbs_prod_global/servlet/DBSServlet')
+        self.assertEqual(request['SizePerEvent'], 512)
+        self.assertEqual(request['RequestNumEvents'], 0)
+        self.assertEqual(request['RequestSizeFiles'], 0)
 
     @attr('integration')
     def testE_StoreResults(self):
@@ -358,6 +359,7 @@ class ReqMgrWorkloadTest(RESTBaseUnitTest):
         self.assertEqual(request['CMSSWVersion'], schema['CMSSWVersion'])
         self.assertEqual(request['Group'], groupName)
         self.assertEqual(request['Requestor'], userName)
+        self.assertEqual(request['DbsUrl'], schema['DbsUrl'])
         
 
     @attr('integration')
@@ -438,6 +440,7 @@ class ReqMgrWorkloadTest(RESTBaseUnitTest):
         self.assertEqual(request['CMSSWVersion'], schema['CMSSWVersion'])
         self.assertEqual(request['Group'], groupName)
         self.assertEqual(request['Requestor'], userName)
+        self.assertEqual(request['DbsUrl'], None)
 
         workload = self.loadWorkload(requestName)
         self.assertEqual(workload.data.request.schema.Task1.SplittingArguments,
@@ -492,6 +495,10 @@ class ReqMgrWorkloadTest(RESTBaseUnitTest):
         self.assertEqual(request['CMSSWVersion'], schema['CMSSWVersion'])
         self.assertEqual(request['Group'], groupName)
         self.assertEqual(request['Requestor'], userName)
+        self.assertEqual(request['DbsUrl'], 'http://cmsdbsprod.cern.ch/cms_dbs_prod_global/servlet/DBSServlet')
+        self.assertEqual(request['SizePerEvent'], 512)
+        self.assertEqual(request['RequestNumEvents'], 0)
+        self.assertEqual(request['RequestSizeFiles'], 0)
 
 
     def testH_MonteCarlo(self):
@@ -510,6 +517,7 @@ class ReqMgrWorkloadTest(RESTBaseUnitTest):
                                                groupName = groupName,
                                                teamName = teamName)
         schema['RequestType'] = "MonteCarlo"
+        schema['DbsUrl'] = 'http://cmsdbsprod.cern.ch/cms_dbs_prod_global/servlet/DBSServlet'
 
         # Set some versions
         schema['ProcessingVersion'] = '2012'
@@ -563,7 +571,10 @@ class ReqMgrWorkloadTest(RESTBaseUnitTest):
         self.assertEqual(request['CMSSWVersion'], schema['CMSSWVersion'])
         self.assertEqual(request['Group'], groupName)
         self.assertEqual(request['Requestor'], userName)
-
+        self.assertEqual(request['DbsUrl'], schema['DbsUrl'])
+        self.assertEqual(request['SizePerEvent'], 512)
+        self.assertEqual(request['RequestNumEvents'], 100)
+        self.assertEqual(request['RequestSizeFiles'], 0)
 
     def testI_RelValMC(self):
         """
@@ -688,6 +699,7 @@ class ReqMgrWorkloadTest(RESTBaseUnitTest):
         schema['AcquisitionEra']    = 'ae2012'
         schema['FirstEvent'] = 1
         schema['FirstLumi'] = 1
+        schema['DbsUrl'] = 'http://cmsdbsprod.cern.ch/cms_dbs_prod_global/servlet/DBSServlet'
 
         try:
             raises = False
@@ -771,8 +783,10 @@ class ReqMgrWorkloadTest(RESTBaseUnitTest):
         self.assertEqual(request['CMSSWVersion'], schema['CMSSWVersion'])
         self.assertEqual(request['Group'], groupName)
         self.assertEqual(request['Requestor'], userName)
-
-
+        self.assertEqual(request['DbsUrl'], schema['DbsUrl'])
+        self.assertEqual(request['SizePerEvent'], 512)
+        self.assertEqual(request['RequestNumEvents'], 100)
+        self.assertEqual(request['RequestSizeFiles'], 0)
 
 if __name__=='__main__':
     unittest.main()

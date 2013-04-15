@@ -102,7 +102,7 @@ def runSplitter(jobFactory, splitParams):
 
 
 def saveJob(job, workflow, sandbox, wmTask = None, jobNumber = 0,
-            wmTaskPrio = None, owner = None, ownerDN = None,
+            owner = None, ownerDN = None,
             ownerGroup = '', ownerRole = '',
             scramArch = None, swVersion = None, agentNumber = 0 ):
     """
@@ -122,7 +122,6 @@ def saveJob(job, workflow, sandbox, wmTask = None, jobNumber = 0,
     job['agentNumber'] = agentNumber
     cacheDir         = job.getCache()
     job['cache_dir'] = cacheDir
-    job['priority']  = wmTaskPrio
     job['owner']     = owner
     job['ownerDN']   = ownerDN
     job['ownerGroup']   = ownerGroup
@@ -163,7 +162,6 @@ def creatorProcess(work, jobCacheDir):
             ownerDN = owner
 
         jobNumber    = work.get('jobNumber', 0)
-        wmTaskPrio   = work.get('wmTaskPrio', None)
     except KeyError, ex:
         msg =  "Could not find critical key-value in work input.\n"
         msg += str(ex)
@@ -189,7 +187,6 @@ def creatorProcess(work, jobCacheDir):
             saveJob(job = job, workflow = workflow,
                     wmTask = wmTaskName,
                     jobNumber = jobNumber,
-                    wmTaskPrio = wmTaskPrio,
                     sandbox = sandbox,
                     owner = owner,
                     ownerDN = ownerDN,
@@ -372,36 +369,6 @@ class JobCreatorPoller(BaseWorkerThread):
 
         self.changeState = ChangeState(self.config)
 
-        # Initiate autoIncrement for MySQL
-        # This is because MySQL stores the autoIncrement in memory and it has
-        # to be resynchronized with couch after a server restart
-        if getattr(myThread, 'dialect', 'None').lower() == 'mysql':
-            incrementDAO     = self.daoFactory(classname = "Jobs.AutoIncrementCheck")
-            couchdb          = CouchServer(config.JobStateMachine.couchurl)
-            jobsdatabase     = couchdb.connectDatabase("%s/jobs" % config.JobStateMachine.couchDBName)
-            try:
-                jobID = jobsdatabase.loadView("JobDump",
-                                              "highestJobID",
-                                              options = {'reduce': False,
-                                                         'limit': 1,
-                                                         'descending': True}
-                                              )['rows'][0]['id']
-                jobID = int(jobID)
-            except IndexError:
-                # In this case, there are no jobs in couch
-                jobID = 0
-            except ValueError:
-                # This is a weird error - there's a document in the couch server
-                # without a job ID as id
-                jobID = 0
-                logging.error("Encountered a document in the JobDump database with an invalid ID!")
-                logging.error("ID: %s" % jobID)
-                pass
-
-            # Now increment the MySQL AutoIncrement
-            logging.info("About to handle MySQL AutoIncrement with jobID %i" % jobID)
-            incrementDAO.execute(input = jobID)
-
         return
 
     def check(self):
@@ -574,7 +541,6 @@ class JobCreatorPoller(BaseWorkerThread):
                 processDict = {'workflow': workflow,
                                'wmWorkload': wmWorkload, 'wmTaskName': wmTask.getPathName(),
                                'jobNumber': jobNumber, 'sandbox': wmTask.data.input.sandbox,
-                               'wmTaskPrio': wmTask.getTaskPriority(),
                                'owner': wmWorkload.getOwner().get('name', None),
                                'ownerDN': wmWorkload.getOwner().get('dn', None),
                                'ownerGroup': wmWorkload.getOwner().get('vogroup', ''),

@@ -6,12 +6,12 @@ If a package ends with a + include all subpackages.
 """
 dependencies = {
                 'wmc-rest':{
-			'bin': ['wmc-dist-patch', 'wmc-dist-unpatch','wmc-httpd'],
+                        'bin': ['wmc-dist-patch', 'wmc-dist-unpatch','wmc-httpd'],
                         'packages' : ['WMCore.REST'],
                         'modules': ['WMCore.Configuration'],
-			},
+                        },
                 'wmc-base':{
-			'bin': ['wmc-dist-patch', 'wmc-dist-unpatch'],
+                        'bin': ['wmc-dist-patch', 'wmc-dist-unpatch'],
                         'packages' : ['WMCore.DataStructs'],
                         'modules': ['WMCore.WMFactory', 'WMCore.WMException', 'WMCore.Configuration',
                                     'WMCore.WMExceptions', 'WMCore.WMFactory', 'WMCore.Lexicon',
@@ -63,8 +63,6 @@ dependencies = {
                                     'src/html/RequestManager',
                                     'src/couchapps/ReqMgr+',
                                     'src/couchapps/ConfigCache+',
-                                    'src/couchapps/OpsClipboard+',
-                                    'src/couchapps/WorkloadSummary+',
                                     'src/couchapps/WMStats+'],
                         },
                 'workqueue':{
@@ -72,7 +70,7 @@ dependencies = {
                                      'WMCore.Services', 'WMCore.Services.DBS+', 'WMCore.Services.PhEDEx+',
                                      'WMCore.Services.RequestManager+', 'WMCore.Services.SiteDB+',
                                      'WMCore.Services.JSONParser+', 'WMCore.Services.WMStats+',
-                                     'WMCore.WMSpec', 'WMCore.WMSpec.Steps',
+                                     'WMCore.WMSpec', 'WMCore.WMSpec.Steps', 'WMCore.WMSpec.Steps.Templates',
                                      'WMCore.ACDC', 'WMCore.GroupUser', 'WMCore.Alerts'],
                         'modules' : ['WMCore.Algorithms.__init__', 'WMCore.Algorithms.Permissions',
                                      'WMCore.Algorithms.MiscAlgos', 'WMCore.Algorithms.ParseXMLFile',
@@ -135,14 +133,11 @@ dependencies = {
                 #        },
                 
                 'reqmon':{
-                        'statics': ['src/couchapps/WMStats+'],
+                        'statics': ['src/couchapps/WMStats+', 
+                                    'src/couchapps/WorkloadSummary+'],
                         },
                 'alertscollector': 
                 {
                         'statics': ['src/couchapps/AlertsCollector+'],
-                },
-                't0wmstats':{
-                        'statics': ['src/couchapps/WMStats+',
-                                    'src/couchapps/WorkloadSummary+'],
-                        }
+                }
                }

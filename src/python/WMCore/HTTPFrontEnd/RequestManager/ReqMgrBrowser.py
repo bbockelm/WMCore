@@ -1,5 +1,9 @@
-#!/usr/bin/env python
-""" Main Module for browsing and modifying requests """
+"""
+Main Module for browsing and modifying requests.
+
+"""
+
+
 import WMCore.RequestManager.RequestDB.Settings.RequestStatus as RequestStatus
 import WMCore.RequestManager.RequestDB.Interface.Request.GetRequest as GetRequest
 import WMCore.HTTPFrontEnd.RequestManager.ReqMgrWebTools as Utilities
@@ -45,7 +49,7 @@ class ReqMgrBrowser(WebAPI):
         # Take a guess
         self.templatedir = config.templates
         self.fields = ['RequestName', 'Group', 'Requestor', 'RequestType',
-                       'ReqMgrRequestBasePriority', 'RequestStatus', 'Complete', 'Success']
+                       "RequestPriority", 'RequestStatus', 'Complete', 'Success']
         self.calculatedFields = {'Written': 'percentWritten', 'Merged':'percentMerged',
                                  'Complete':'percentComplete', 'Success' : 'percentSuccess'}
         # entries in the table that show up as HTML links for that entry
@@ -61,11 +65,10 @@ class ReqMgrBrowser(WebAPI):
             'Site Whitelist', 'Site Blacklist']
 
         self.adminMode = True
-        # don't allow mass editing.  Make people click one at a time.
-        #self.adminFields = {'RequestStatus':'statusMenu', 'ReqMgrRequestBasePriority':'Utilities.priorityMenu'}
         self.adminFields = {}
         self.couchUrl = config.couchUrl
         self.configDBName = config.configDBName
+        self.workloadDBName = config.workloadDBName
         self.yuiroot = config.yuiroot
         self.wmstatWriteURL = "%s/%s" % (self.couchUrl.rstrip('/'), config.wmstatDBName)
         cherrypy.engine.subscribe('start_thread', self.initThread)
@@ -98,6 +101,15 @@ class ReqMgrBrowser(WebAPI):
         tableBody = self.drawRequests(requests)
         return self.templatepage("ReqMgrBrowser", yuiroot=self.yuiroot,
                                  fields=self.fields, tableBody=tableBody)
+        
+    @cherrypy.expose
+    @cherrypy.tools.secmodv2()
+    def index(self):
+        requests = GetRequest.getRequests()
+        tableBody = self.drawRequests(requests)
+        return self.templatepage("ReqMgrBrowser", yuiroot=self.yuiroot,
+                                 fields=self.fields, tableBody=tableBody)
+        
 
     @cherrypy.expose
     @cherrypy.tools.secmodv2()
@@ -112,7 +124,7 @@ class ReqMgrBrowser(WebAPI):
         self.validate(requestName)
         request = GetRequest.getRequestByName(requestName)
         helper = Utilities.loadWorkload(request)
-        splittingDict = helper.listJobSplittingParametersByTask()
+        splittingDict = helper.listJobSplittingParametersByTask(performance = False)
         taskNames = splittingDict.keys()
         taskNames.sort()
 
@@ -152,11 +164,10 @@ class ReqMgrBrowser(WebAPI):
         elif splittingAlgo == "EventAwareLumiBased":
             splitParams["events_per_job"] = int(submittedParams["avg_events_per_job"])
             splitParams["max_events_per_lumi"] = int(submittedParams["max_events_per_lumi"])
-            if str(submittedParams["halt_job_on_file_boundaries"]) == "True":
+            if str(submittedParams["halt_job_on_file_boundaries_event_aware"]) == "True":
                 splitParams["halt_job_on_file_boundaries"] = True
             else:
                 splitParams["halt_job_on_file_boundaries"] = False
-
         elif splittingAlgo == "EventBased":
             splitParams["events_per_job"] = int(submittedParams["events_per_job"])
             if submittedParams.has_key("events_per_lumi"):
@@ -164,7 +175,7 @@ class ReqMgrBrowser(WebAPI):
         elif splittingAlgo == "Harvest":
             splitParams["periodic_harvest_interval"] = int(submittedParams["periodic_harvest_interval"])
         elif 'Merg' in splittingTask:
-            for field in ['min_merge_size', 'max_merge_size', 'max_merge_events']:
+            for field in ['min_merge_size', 'max_merge_size', 'max_merge_events', 'max_wait_time']:
                 splitParams[field] = int(submittedParams[field])
         if "include_parents" in submittedParams.keys():
             if str(submittedParams["include_parents"]) == "True":
@@ -191,7 +202,7 @@ class ReqMgrBrowser(WebAPI):
         except AssertionError:
             raise cherrypy.HTTPError(404, "Cannot load request %s" % requestName)
         adminHtml = statusMenu(requestName, request['RequestStatus']) \
-                  + ' Priority ' + Utilities.priorityMenu(request)
+                  + ' Priority: ' + Utilities.priorityMenu(request)
         return self.templatepage("Request", requestName=requestName,
                                 detailsFields=self.detailsFields,
                                 requestSchema=request,
@@ -200,25 +211,49 @@ class ReqMgrBrowser(WebAPI):
                                 adminHtml=adminHtml,
                                 messages=request['RequestMessages'],
                                 updateDictList=request['RequestUpdates'])
+        
+        
+    def _getConfigCache(self, requestName, processMethod):
+        try:
+            request = Utilities.requestDetails(requestName)
+        except Exception, ex:
+            msg = "Cannot find request %s, check logs." % requestName
+            logging.error("%s, reason: %s" % (msg, ex))
+            return msg
+        url = request.get("ConfigCacheUrl", None) or self.couchUrl
+        try:
+            configCache = ConfigCache(url, self.configDBName)
+            configDocId = request["ConfigCacheID"]
+            configCache.loadByID(configDocId)
+        except Exception, ex:
+            msg = "Cannot find ConfigCache document %s on %s." % (configDocId, url)
+            logging.error("%s, reason: %s" % (msg, ex))
+            return msg
+        return getattr(configCache, processMethod)()
+            
 
     @cherrypy.expose
     @cherrypy.tools.secmodv2()
-    def showOriginalConfig(self, docId):
-        """ Makes a link to the original text of the config """
-        configCache = ConfigCache(self.couchUrl, self.configDBName)
-        configCache.loadByID(docId)
-        configString =  configCache.getConfig()
-        if configString == None:
-            return "Cannot find document " + str(docId) + " in Couch DB"
-        return '<pre>' + configString + '</pre>'
+    def showOriginalConfig(self, requestName):
+        """
+        Makes a link to the original text of the config document.
+        
+        """
+        self.validate(requestName)
+        return '<pre>' + self._getConfigCache(requestName, "getConfig") + '</pre>'
+
 
     @cherrypy.expose
     @cherrypy.tools.secmodv2()
-    def showTweakFile(self, docId):
-        """ Makes a link to the dump of the tweakfile """
-        configCache = ConfigCache(self.couchUrl, self.configDBName)
-        configCache.loadByID(docId)
-        return str(configCache.getPSetTweaks()).replace('\n', '<br>')
+    def showTweakFile(self, requestName):
+        """
+        Makes a link to the dump of the tweakfile.
+        
+        """
+        self.validate(requestName)
+        tweakString = self._getConfigCache(requestName, "getPSetTweaks")
+        return str(tweakString).replace('\n', '<br>')
+
 
     @cherrypy.expose
     @cherrypy.tools.secmodv2()
@@ -300,7 +335,7 @@ class ReqMgrBrowser(WebAPI):
         return "%i%%" % pct
 
     @cherrypy.expose
-    @cherrypy.tools.secmodv2()
+    @cherrypy.tools.secmodv2(role=Utilities.security_roles(), group = Utilities.security_groups())    
     def doAdmin(self, **kwargs):
         """  format of kwargs is {'requestname:status' : 'approved', 'requestname:priority' : '2'} """
         message = ""
@@ -312,7 +347,7 @@ class ReqMgrBrowser(WebAPI):
                 priority = kwargs[requestName+':priority']
                 if priority != '':
                     Utilities.changePriority(requestName, priority, self.wmstatWriteURL)
-                    message += "Changed priority for %s to %s\n" % (requestName, priority)
+                    message += "Changed priority for %s to %s.\n" % (requestName, priority)
                 if status != "":
                     Utilities.changeStatus(requestName, status, self.wmstatWriteURL)
                     message += "Changed status for %s to %s\n" % (requestName, status)
@@ -323,7 +358,7 @@ class ReqMgrBrowser(WebAPI):
 
 
     @cherrypy.expose
-    @cherrypy.tools.secmodv2()
+    @cherrypy.tools.secmodv2(role=Utilities.security_roles(), group = Utilities.security_groups())
     # FIXME needs to check if authorized, or original user
     def modifyWorkload(self, requestName, workload,
                        CMSSWVersion=None, GlobalTag=None,
@@ -336,12 +371,6 @@ class ReqMgrBrowser(WebAPI):
         helper.load(workload)
         schema = helper.data.request.schema
         message = ""
-        #inputTask = helper.getTask(requestType).data.input.dataset
-        if GlobalTag or CMSSWVersion:
-            helper.setCMSSWParams(cmsswVersion=CMSSWVersion, globalTag=GlobalTag)
-            helper.data.request.schema.CMSSWVersion = CMSSWVersion
-            helper.data.request.schema.GlobalTag = GlobalTag
-            message += "CMSSW version %s, GlobalTag %s<br/>" % (CMSSWVersion, GlobalTag)
         if runWhitelist != "" and runWhitelist != None:
             l = Utilities.parseRunList(runWhitelist)
             helper.setRunWhitelist(l)
@@ -362,9 +391,5 @@ class ReqMgrBrowser(WebAPI):
             helper.setBlockBlacklist(l)
             schema.BlockBlacklist = l
             message += 'Changed blockBlackList to %s<br>' % l
-        if ScramArch and ScramArch != schema.ScramArch:
-            message += "modifyng the Scram Arch to %s" % ScramArch
-            schema.ScramArch = ScramArch
-            helper.setCMSSWParams(cmsswVersion=schema.CMSSWVersion, scramArch=ScramArch)
         Utilities.saveWorkload(helper, workload)
         return message + detailsBackLink(requestName)

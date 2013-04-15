@@ -49,6 +49,10 @@ class RFCPCERNImpl(StageOutImpl):
         if self.isEOS(targetPFN):
             return
 
+        # Only create dir on remote storage
+        if self.stageIn:
+            return
+
         targetDir = os.path.dirname(self.parseCastorPath(targetPFN))
 
         # targetDir does not exist => create it
@@ -95,7 +99,6 @@ class RFCPCERNImpl(StageOutImpl):
         If adler32 checksum is provided, use it for the transfer
 
         """
-        isTargetEOS = self.isEOS(targetPFN)
 
         result = ""
 
@@ -106,11 +109,13 @@ class RFCPCERNImpl(StageOutImpl):
             result += "LOCAL_SIZE=`stat -c%%s \"%s\"`\n" % localPFN
             result += "echo \"Local File Size is: $LOCAL_SIZE\"\n"
 
+        isRemoteEOS = self.isEOS(remotePFN)
+
         useChecksum = ( checksums != None and checksums.has_key('adler32') and not self.stageIn )
+        removeCommand = self.createRemoveFileCommand(targetPFN)
 
-        if isTargetEOS:
+        if isRemoteEOS:
 
-            result += "source /afs/cern.ch/project/eos/installation/pro/etc/setup.sh\n"
             result += "xrdcp -f -s "
 
             if useChecksum:
@@ -139,37 +144,54 @@ class RFCPCERNImpl(StageOutImpl):
             result += "LOCAL_SIZE=`stat -c%%s \"%s\"`\n" % localPFN
             result += "echo \"Local File Size is: $LOCAL_SIZE\"\n"
 
-        if isTargetEOS:
+        if isRemoteEOS:
 
-            remotePFN = remotePFN.replace("root://eoscms//eos/cms/", "/eos/cms/", 1)
+            (_,host,path,_) = self.splitPFN(remotePFN)
 
-            result += "REMOTE_FILEINFO=`eos fileinfo '%s' -m`\n" % remotePFN
-            result += "REMOTE_SIZE=`echo \"$REMOTE_FILEINFO\" | sed -r 's/.* size=([0-9]+) .*/\\1/'`\n"
+            result += "REMOTE_SIZE=`xrd '%s' stat '%s' | sed -r 's/.* Size: ([0-9]+) .*/\\1/'`\n" % (host, path)
             result += "echo \"Remote File Size is: $REMOTE_SIZE\"\n"
 
             if useChecksum:
 
                 result += "echo \"Local File Checksum is: %s\"\n" % checksums['adler32']
-                result += "REMOTE_XS=`echo \"$REMOTE_FILEINFO\" | sed -r 's/.* xstype=adler xs=([0-9a-fA-F]{8})[0]+ .*/\\1/'`\n"
+                result += "REMOTE_XS=`xrd '%s' getchecksum '%s' | sed -r 's/.* eos ([0-9a-fA-F]{8}).*/\\1/'`\n" % (host, path)
                 result += "echo \"Remote File Checksum is: $REMOTE_XS\"\n"
 
                 result += "if [ $REMOTE_SIZE ] && [ $REMOTE_XS ] && [ $LOCAL_SIZE == $REMOTE_SIZE ] && [ '%s' == $REMOTE_XS ]; then exit 0; " % checksums['adler32']
-                result += "else echo \"Error: Size or Checksum Mismatch between local and SE\"; eos rm '%s'; exit 60311 ; fi" % remotePFN
+                result += "else echo \"Error: Size or Checksum Mismatch between local and SE\"; %s ; exit 60311 ; fi" % removeCommand
 
             else:
 
                 result += "if [ $REMOTE_SIZE ] && [ $LOCAL_SIZE == $REMOTE_SIZE ]; then exit 0; "
-                result += "else echo \"Error: Size Mismatch between local and SE\"; eos rm '%s'; exit 60311 ; fi" % remotePFN
+                result += "else echo \"Error: Size Mismatch between local and SE\"; %s ; exit 60311 ; fi" % removeCommand
 
         else:
 
             result += "REMOTE_SIZE=`rfstat '%s' | grep Size | cut -f2 -d: | tr -d ' '`\n" % remotePFN
             result += "echo \"Remote File Size is: $REMOTE_SIZE\"\n"
 
-            result += "if [ $REMOTE_SIZE ] && [ $LOCAL_SIZE == $REMOTE_SIZE ]; then exit 0; else echo \"Error: Size Mismatch between local and SE\"; exit 60311 ; fi"
+            result += "if [ $REMOTE_SIZE ] && [ $LOCAL_SIZE == $REMOTE_SIZE ]; then exit 0; else echo \"Error: Size Mismatch between local and SE\"; %s ; exit 60311 ; fi" % removeCommand
 
         return result
 
+
+    def createRemoveFileCommand(self, pfn):
+        """
+        _createRemoveFileCommand_
+
+        Alternate between EOS, CASTOR and local.
+        """
+        if self.isEOS(pfn):
+            (_,host,path,_) = self.splitPFN(pfn)
+            return "xrd %s rm %s" % (host, path)
+        try:
+            simplePFN = self.parseCastorPath(pfn)
+            return  "stager_rm -a -M %s ; nsrm %s" % (simplePFN, simplePFN)
+        except StageOutError:
+            # Not castor
+            pass
+
+        return StageOutImpl.createRemoveFileCommand(self, pfn)
 
     def removeFile(self, pfnToRemove):
         """
@@ -178,7 +200,8 @@ class RFCPCERNImpl(StageOutImpl):
         """
         if self.isEOS(pfnToRemove):
 
-            command = "xrd eoscms rm %s" % pfnToRemove.replace("root://eoscms//eos/cms/", "/eos/cms/", 1)
+            (_,host,path,_) = self.splitPFN(pfnToRemove)
+            command = "xrd %s rm %s" % (host, path)
 
         else:
 
@@ -302,7 +325,47 @@ class RFCPCERNImpl(StageOutImpl):
         Check if the PFN is for EOS
 
         """
-        return pfn.startswith("root://eoscms//")
+        ( protocol,host,_,_) = self.splitPFN(pfn)
+        if protocol == "root" and not host.startswith("castor"):
+            return True
+        else:
+            return False
 
+    def splitPFN(self, pfn):
+        """
+        _splitPFN_
+
+        Split the PFN in to { <protocol>, <host>, <path>, <opaque> }
+        """
+
+        protocol = pfn.split(':')[0]
+        host = pfn.split('/')[2]
+        thisList = pfn.replace( '%s://%s/' % ( protocol, host ),'' ).split( '?' )
+        path = thisList[0]
+        opaque = ""
+        # If we have any opaque info keep it
+        if len( thisList ) == 2:
+            opaque = "?%s" % thisList[1]
+
+        # check for the path to actually be in the opaque information
+        if opaque.startswith( "?path=" ):
+            elements = opaque.split( '&' )
+            path = elements[0].replace('?path=','')
+            buildingOpaque = '?'
+            for element in elements[1:]:
+                buildingOpaque += element
+                buildingOpaque += '&'
+            opaque = buildingOpaque.rstrip( '&' )
+        elif opaque.find( "&path=" ) != -1:
+            elements = opaque.split( '&' )
+            buildingOpaque = elements[0]
+            for element in elements[1:]:
+                if element.startswith( 'path=' ):
+                    path = element.replace( 'path=','' )
+                else:
+                    buildOpaque += '&' + element
+            opaque = buildingOpaque
+
+        return protocol, host, path, opaque
 
 registerStageOutImpl("rfcp-CERN", RFCPCERNImpl)

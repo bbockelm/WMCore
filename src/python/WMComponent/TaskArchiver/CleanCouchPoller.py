@@ -66,19 +66,17 @@ class CleanCouchPoller(BaseWorkerThread):
             
             deletableWorkflows = self.centralCouchDBReader.workflowsByStatus(self.deletableStates)
             
-            logging.info("Ready to delete %s" % deletableWorkflows)     
-            for workflowName in deletableWorkflows:
-                if self.cleanAllLocalCouchDB(workflowName):
-                    self.centralCouchDBWriter.updateRequestStatus(workflowName, "normal-archived")
-                    logging.info("status updated to normal-archived %s" % workflowName)
+            logging.info("Ready to archive normal %s workflows" % len(deletableWorkflows))
+            self.archiveWorkflows(deletableWorkflows, "normal-archived")
             
             abortedWorkflows = self.centralCouchDBReader.workflowsByStatus(["aborted-completed"])
-            logging.info("Ready to delete aborted %s" % abortedWorkflows)
-            for workflowName in abortedWorkflows:
-                if self.cleanAllLocalCouchDB(workflowName):
-                    self.centralCouchDBWriter.updateRequestStatus(workflowName, "aborted-archived")
-                    logging.info("status updated to aborted-archived %s" % workflowName)
-
+            logging.info("Ready to archive aborted %s workflows" % len(abortedWorkflows))
+            self.archiveWorkflows(abortedWorkflows, "aborted-archived")
+            
+            rejectedWorkflows = self.centralCouchDBReader.workflowsByStatus(["rejected"])
+            logging.info("Ready to archive rejected %s workflows" % len(rejectedWorkflows))
+            self.archiveWorkflows(rejectedWorkflows, "rejected-archived")
+            
             #TODO: following code is temproraly - remove after production archived data is cleaned 
             removableWorkflows = self.centralCouchDBReader.workflowsByStatus(["archived"])
             
@@ -96,7 +94,13 @@ class CleanCouchPoller(BaseWorkerThread):
         except Exception, ex:
             logging.error(str(ex))
             logging.error("Error occurred, will try again next cycle")
-
+    
+    def archiveWorkflows(self, workflows, archiveState):
+        for workflowName in workflows:
+            if self.cleanAllLocalCouchDB(workflowName):
+                self.centralCouchDBWriter.updateRequestStatus(workflowName, archiveState)
+                logging.info("status updated to %s %s" % (archiveState, workflowName))
+                
     def deleteWorkflowFromJobCouch(self, workflowName, db):
         """
         _deleteWorkflowFromCouch_
@@ -117,8 +121,14 @@ class CleanCouchPoller(BaseWorkerThread):
             couchDB = self.wmstatsCouchDB.getDBInstance()
             view = "jobsByStatusWorkflow"
             
-        options = {"startkey": [workflowName], "endkey": [workflowName, {}], "stale": "ok", "reduce": False}
-        jobs = couchDB.loadView(db, view, options = options)['rows']
+        options = {"startkey": [workflowName], "endkey": [workflowName, {}], "reduce": False}
+        try:
+            jobs = couchDB.loadView(db, view, options = options)['rows']
+        except Exception, ex:
+            errorMsg = "Error on loading jobs for %s" % workflowName
+            logging.warning("%s/n%s" % (str(ex), errorMsg))
+            return {'status': 'error', 'message': errorMsg}
+        
         for j in jobs:
             doc = {}
             doc["_id"]  = j['value']['id']
@@ -158,12 +168,6 @@ class CleanCouchPoller(BaseWorkerThread):
         # if one of the procedure fails return False
         if (jobReport["status"] == "error" or fwjrReport["status"] == "error" or 
             wmstatsReport["status"] == "error"):
-            return False
-        
-        # if the data doesn't exist on all the db return False
-        if (jobReport["status"] == "warning" and 
-            fwjrReport["status"] == "warning" and 
-            wmstatsReport["status"] == "warning"):
             return False
         # other wise return True.
         return True

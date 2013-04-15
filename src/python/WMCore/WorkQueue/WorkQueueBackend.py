@@ -60,7 +60,7 @@ class WorkQueueBackend(object):
         self.pullFromParent(continuous = False)
         self.sendToParent(continuous = False)
 
-    def pullFromParent(self, continuous = True):
+    def pullFromParent(self, continuous = True, cancel = False):
         """Replicate from parent couch - blocking"""
         try:
             if self.parentCouchUrl and self.queueUrl:
@@ -68,11 +68,12 @@ class WorkQueueBackend(object):
                                       destination = "%s/%s" % (self.hostWithAuth, self.inbox.name),
                                       filter = 'WorkQueue/queueFilter',
                                       query_params = {'childUrl' : self.queueUrl, 'parentUrl' : self.parentCouchUrl},
-                                      continuous = continuous)
+                                      continuous = continuous,
+                                      cancel = cancel)
         except Exception, ex:
             self.logger.warning('Replication from %s failed: %s' % (self.parentCouchUrl, str(ex)))
 
-    def sendToParent(self, continuous = True):
+    def sendToParent(self, continuous = True, cancel = False):
         """Replicate to parent couch - blocking"""
         try:
             if self.parentCouchUrl and self.queueUrl:
@@ -80,7 +81,8 @@ class WorkQueueBackend(object):
                                       destination = self.parentCouchUrlWithAuth,
                                       filter = 'WorkQueue/queueFilter',
                                       query_params = {'childUrl' : self.queueUrl, 'parentUrl' : self.parentCouchUrl},
-                                      continuous = continuous)
+                                      continuous = continuous,
+                                      cancel = cancel)
         except Exception, ex:
             self.logger.warning('Replication to %s failed: %s' % (self.parentCouchUrl, str(ex)))
 
@@ -155,7 +157,9 @@ class WorkQueueBackend(object):
         """
         kwargs.update({'WMSpec' : spec,
                        'RequestName' : spec.name(),
-                       'EndPolicy' : spec.endPolicyParameters()
+                       'StartPolicy' : spec.startPolicyParameters(),
+                       'EndPolicy' : spec.endPolicyParameters(),
+                       'OpenForNewData' : True
                       })
         unit = CouchWorkQueueElement(self.inbox, elementParams = kwargs)
         unit.id = spec.name()
@@ -257,7 +261,11 @@ class WorkQueueBackend(object):
         if not elementIds:
             return
         uri = "/" + self.db.name + "/_design/WorkQueue/_update/in-place/"
-        data = {"updates" : json.dumps(updatedParams)}
+        optionsArg = {}
+        if "options" in updatedParams:
+            optionsArg.update(updatedParams.pop("options"))
+        data = {"updates" : json.dumps(updatedParams),
+                "options" : json.dumps(optionsArg)}
         for ele in elementIds:
             thisuri = uri + ele + "?" + urllib.urlencode(data)
             self.db.makeRequest(uri = thisuri, type = 'PUT')
@@ -267,7 +275,11 @@ class WorkQueueBackend(object):
     def updateInboxElements(self, *elementIds, **updatedParams):
         """Update given inbox element's (identified by id) with new parameters"""
         uri = "/" + self.inbox.name + "/_design/WorkQueue/_update/in-place/"
-        data = {"updates" : json.dumps(updatedParams)}
+        optionsArg = {}
+        if "options" in updatedParams:
+            optionsArg.update(updatedParams.pop("options"))
+        data = {"updates" : json.dumps(updatedParams),
+                "options" : json.dumps(optionsArg)}
         for ele in elementIds:
             thisuri = uri + ele + "?" + urllib.urlencode(data)
             self.inbox.makeRequest(uri = thisuri, type = 'PUT')
@@ -356,6 +368,12 @@ class WorkQueueBackend(object):
         return [{'dbs_url' : x['key'][0],
                  'name' : x['key'][1]} for x in data.get('rows', [])]
 
+    def getActivePileupData(self):
+        """Get data items we have work in the queue for with pileup"""
+        data = self.db.loadView('WorkQueue', 'activePileupData', {'reduce' : True, 'group' : True})
+        return [{'dbs_url' : x['key'][0],
+                 'name' : x['key'][1]} for x in data.get('rows', [])]
+
     def getElementsForData(self, dbs, data):
         """Get active elements for this dbs & data combo"""
         elements = self.db.loadView('WorkQueue', 'elementsByData', {'key' : data, 'include_docs' : True})
@@ -366,6 +384,13 @@ class WorkQueueBackend(object):
     def getElementsForParentData(self, data):
         """Get active elements for this data """
         elements = self.db.loadView('WorkQueue', 'elementsByParentData', {'key' : data, 'include_docs' : True})
+        return [CouchWorkQueueElement.fromDocument(self.db,
+                                                   x['doc'])
+                for x in elements.get('rows', [])]
+
+    def getElementsForPileupData(self, data):
+        """Get active elements for this data """
+        elements = self.db.loadView('WorkQueue', 'elementsByPileupData', {'key' : data, 'include_docs' : True})
         return [CouchWorkQueueElement.fromDocument(self.db,
                                                    x['doc'])
                 for x in elements.get('rows', [])]
@@ -444,8 +469,53 @@ class WorkQueueBackend(object):
                                 options)
         if request:
             if data['rows']:
-                return data['rows'][0]['value']
+                injectionStatus = data['rows'][0]['value']
+                inboxElement = self.getInboxElements(elementIDs = [data['rows'][0]['key']])
+                return injectionStatus and not inboxElement[0].get('OpenForNewData', False)
             else:
                 raise WorkQueueNoMatchingElements("%s not found" % request)
         else:
-            return [{x['key']: x['value']} for x in data.get('rows', [])]
+            injectionStatus = dict((x['key'], x['value']) for x in data.get('rows', []))
+            inboxElements = self.getInboxElements(elementIDs = injectionStatus.keys())
+            finalInjectionStatus = []
+            for element in inboxElements:
+                if not element.get('OpenForNewData', False) and injectionStatus[element._id]:
+                    finalInjectionStatus.append({element._id : True})
+                else:
+                    finalInjectionStatus.append({element._id : False})
+
+            return finalInjectionStatus
+
+    def checkReplicationStatus(self):
+        """
+        _checkReplicationStatus_
+
+        Check if the workqueue replication is ok, if not
+        then delete the documents so that new replications can be triggered
+        when appropiate.
+        It returns True if there is no error, and False otherwise.
+        """
+
+        status = self.server.status()
+        replicationError = False
+        replicationCount = 0
+        expectedReplicationCount = 2 # GQ -> LQ-Inbox & LQ-Inbox -> GQ
+        # Remove the protocol frm the sanitized url
+        inboxUrl = sanitizeURL('%s/%s' % (self.server.url, self.inbox.name))['url'].split('/', 2)[2]
+        try:
+            for activeTasks in status['active_tasks']:
+                if activeTasks['type'] == 'Replication':
+                    if inboxUrl in activeTasks['task']:
+                        replicationCount += 1
+            if replicationCount < expectedReplicationCount:
+                replicationError = True
+        except:
+            replicationError = True
+
+        if replicationError:
+            # Stop workqueue related replication
+            self.logger.error("Stopping replication as it was in error state. It will be restarted.")
+            self.pullFromParent(continuous = True, cancel = True)
+            self.sendToParent(continuous = True, cancel = True)
+
+        return not replicationError

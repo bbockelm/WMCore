@@ -84,13 +84,23 @@ class DBSReader:
                                                           blockName = blockName,
                                                           locations = False)]
 
+    def listOpenFileBlocks(self, dataset):
+        """
+        _listOpenFileBlocks_
+
+        Retrieve a list of open fileblock names for a dataset
+
+        """
+        return [x['Name'] for x in self.getFileBlocksInfo(dataset, onlyClosedBlocks = False,
+                                                          locations = False) if str(x['OpenForWriting' ]) == '1']
+
     def listFileBlockLocation(self, block):
         """Fake locations"""
         return self.dataBlocks.getLocation(block)
 
-    def listFilesInBlock(self, block):
+    def listFilesInBlock(self, fileBlockName):
         """Fake files"""
-        return self.dataBlocks.getFiles(block)
+        return self.dataBlocks.getFiles(fileBlockName)
 
     def listFilesInBlockWithParents(self, block):
         return self.dataBlocks.getFiles(block, True)
@@ -131,19 +141,43 @@ class DBSReader:
 
     def listRuns(self, dataset = None, block = None):
         def getRunsFromBlock(b):
-            results = []
+            results = set()
             for x in self.dataBlocks.getFiles(b):
-                results.extend([y['RunNumber'] for y in x['LumiList']])
+                results = results.union([y['RunNumber'] for y in x['LumiList']])
+            return list(results)
+
+        if block:
+            return getRunsFromBlock(block)
+        if dataset:
+            runs = set()
+            for block in self.dataBlocks.getBlocks(dataset):
+                runs = runs.union(getRunsFromBlock(block['Name']))
+            return list(runs)
+        return None
+
+    def listRunLumis(self, dataset = None, block = None):
+        def getRunsFromBlock(b):
+            results = {}
+            for x in self.dataBlocks.getFiles(b):
+                for y in x['LumiList']:
+                    if y['RunNumber'] not in results:
+                        results[y['RunNumber']] = 0
+                    results[y['RunNumber']] += 1
             return results
 
         if block:
             return getRunsFromBlock(block)
         if dataset:
-            runs = []
+            runs = {}
             for block in self.dataBlocks.getBlocks(dataset):
-                runs.extend(getRunsFromBlock(block['Name']))
+                updateRuns = getRunsFromBlock(block['Name'])
+                for run in updateRuns:
+                    if run not in runs:
+                        runs[run] = 0
+                    runs[run] += updateRuns[run]
             return runs
         return None
+
 
 
     def getDBSSummaryInfo(self, dataset=None, block=None):
@@ -188,5 +222,21 @@ class DBSReader:
 
     def listBlockParents(self, block):
         return self.dataBlocks.getParentBlock(block, 1)
+
+    def listDatasetLocation(self, dataset):
+        """
+        _listDatasetLocation_
+
+        List the SEs where there is at least a block of the given
+        dataset.
+        """
+        blocks = self.getFileBlocksInfo(dataset, onlyClosedBlocks = False,
+                                        blockName = '*', locations = True)
+
+        result = set()
+        for block in blocks:
+            result |= set([x['Name'] for x in block['StorageElementList']])
+
+        return list(result)
 
 # pylint: enable-msg=W0613,R0201

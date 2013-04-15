@@ -33,13 +33,18 @@ def getTestArguments():
 
         "CouchURL": os.environ.get("COUCHURL", None),
         "CouchDBName": "scf_wmagent_configcache",
-
         "ConfigCacheID": "03da10e20c7b98c79f9d6a5c8900f83b",
+        # or alternatively CouchURL part can be replaced by ConfigCacheUrl,
+        # then ConfigCacheUrl + CouchDBName + ConfigCacheID
+        "ConfigCacheUrl": None,
+
         "DashboardHost" : "127.0.0.1",
         "DashboardPort" : 8884,
         }
 
     return arguments
+
+
 
 class MonteCarloFromGENWorkloadFactory(StdBase):
     """
@@ -49,7 +54,12 @@ class MonteCarloFromGENWorkloadFactory(StdBase):
     """
     def __init__(self):
         StdBase.__init__(self)
+
+        # Define attributes used by this spec
+        self.openRunningTimeout = None
+
         return
+
 
     def buildWorkload(self):
         """
@@ -68,14 +78,17 @@ class MonteCarloFromGENWorkloadFactory(StdBase):
         workload = self.createWorkload()
         workload.setDashboardActivity("lheproduction")
         self.reportWorkflowToDashboard(workload.getDashboardActivity())
-        workload.setWorkQueueSplitPolicy("Block", self.procJobSplitAlgo, self.procJobSplitArgs)
+        workload.setWorkQueueSplitPolicy("Block", self.procJobSplitAlgo, self.procJobSplitArgs,
+                                         OpenRunningTimeout = self.openRunningTimeout)
         procTask = workload.newTask("MonteCarloFromGEN")
 
         outputMods = self.setupProcessingTask(procTask, "Processing", self.inputDataset,
                                               couchURL = self.couchURL, couchDBName = self.couchDBName,
+                                              configCacheUrl = self.configCacheUrl,
                                               configDoc = self.configCacheID, splitAlgo = self.procJobSplitAlgo,
                                               splitArgs = self.procJobSplitArgs, stepType = "CMSSW",
-                                              primarySubType = "Production")
+                                              primarySubType = "Production", timePerEvent = self.timePerEvent,
+                                              memoryReq = self.memory, sizePerEvent = self.sizePerEvent)
         self.addLogCollectTask(procTask)
 
         procMergeTasks = {}
@@ -85,7 +98,13 @@ class MonteCarloFromGENWorkloadFactory(StdBase):
                                           outputModuleName)
             procMergeTasks[outputModuleName] = mergeTask
 
+        workload.setBlockCloseSettings(workload.getBlockCloseMaxWaitTime(),
+                                       workload.getBlockCloseMaxFiles(),
+                                       25000000,
+                                       workload.getBlockCloseMaxSize())
+
         return workload
+    
 
     def __call__(self, workloadName, arguments):
         """
@@ -104,6 +123,10 @@ class MonteCarloFromGENWorkloadFactory(StdBase):
         # by the ReqMgr or whatever is creating this workflow.
         self.couchURL = arguments["CouchURL"]
         self.couchDBName = arguments["CouchDBName"]
+        self.configCacheUrl = arguments.get("ConfigCacheUrl", None)
+
+        # MonteCarloFromGen is split by block and can receive more blocks after first split for certain delay
+        self.openRunningTimeout = int(arguments.get("OpenRunningTimeout", 0))
 
         # Optional arguments that default to something reasonable.
         self.dbsUrl = arguments.get("DbsUrl", "http://cmsdbsprod.cern.ch/cms_dbs_prod_global/servlet/DBSServlet")
@@ -120,6 +143,7 @@ class MonteCarloFromGENWorkloadFactory(StdBase):
         self.procJobSplitAlgo  = arguments.get("StdJobSplitAlgo", "LumiBased")
         self.procJobSplitArgs  = arguments.get("StdJobSplitArgs", {"lumis_per_job": 1})
         return self.buildWorkload()
+    
 
     def validateSchema(self, schema):
         """
@@ -133,8 +157,9 @@ class MonteCarloFromGENWorkloadFactory(StdBase):
                           "CouchDBName", "ScramArch"]
         self.requireValidateFields(fields = requiredFields, schema = schema,
                                    validate = False)
+        couchUrl = schema.get("ConfigCacheUrl", None) or schema["CouchURL"]
         outMod = self.validateConfigCacheExists(configID = schema["ConfigCacheID"],
-                                                couchURL = schema["CouchURL"],
+                                                couchURL = couchUrl,
                                                 couchDBName = schema["CouchDBName"],
                                                 getOutputModules = True)
 
@@ -142,7 +167,6 @@ class MonteCarloFromGENWorkloadFactory(StdBase):
             if not schema.get("StdJobSplitArgs", {"lumis_per_job": 1}).get("lumis_per_job", 0) > 0:
                 self.raiseValidationException(msg = "Invalid number of lumis_per_job for MCFromGEN")
 
-        return
 
 
 def monteCarloFromGENWorkload(workloadName, arguments):

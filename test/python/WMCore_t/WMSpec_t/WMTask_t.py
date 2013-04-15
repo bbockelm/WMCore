@@ -7,7 +7,7 @@ Unit tests for the WMTask class.
 
 import unittest
 
-from WMCore.WMSpec.WMTask import WMTask, WMTaskHelper, makeWMTask
+from WMCore.WMSpec.WMTask import WMTask, makeWMTask
 from WMCore.WMSpec.WMStep import makeWMStep
 
 class WMTaskTest(unittest.TestCase):
@@ -24,8 +24,9 @@ class WMTaskTest(unittest.TestCase):
         Verify that the WMTask and the WMTaskHelper classes can be
         instantiated.
         """
-        task1 = WMTask("task1")
-        task2 = makeWMTask("task2")
+        WMTask("task1")
+        makeWMTask("task2")
+
         return
 
     def testTreeBuilding(self):
@@ -35,9 +36,9 @@ class WMTaskTest(unittest.TestCase):
         Verify that tasks can be created and arranged in a hierarchy.
         """
         task1 = makeWMTask("task1")
-        task2a = task1.addTask("task2a")
-        task2b = task1.addTask("task2b")
-        task2c = task1.addTask("task2c")
+        task1.addTask("task2a")
+        task1.addTask("task2b")
+        task1.addTask("task2c")
 
         goldenTasks = ["task2a", "task2b", "task2c"]
         for childTask in task1.childTaskIterator():
@@ -61,7 +62,6 @@ class WMTaskTest(unittest.TestCase):
         task2a = task1.addTask("task2a")
         task2b = task1.addTask("task2b")
         task2c = task1.addTask("task2c")
-
         task3 = task2a.addTask("task3")
 
         step1 = makeWMStep("step1")
@@ -147,39 +147,72 @@ class WMTaskTest(unittest.TestCase):
         testTask = makeWMTask("TestTask")
         testTask.setTaskType("Processing")
 
-        assert testTask.taskType() == "Processing", \
-               "Error: Wrong task type."
+        self.assertEqual(testTask.taskType(), "Processing",
+                         "Error: Wrong task type.")
 
+        testTask.setJobResourceInformation(timePerEvent = 12, memoryReq = 2300000,
+                                           sizePerEvent = 512)
         testTask.setSplittingAlgorithm("MadeUpAlgo", events_per_job = 100,
                                        max_job_size = 24,
                                        one_more_param = "Hello")
         testTask.setSiteWhitelist(["T1_US_FNAL", "T1_CH_CERN"])
         testTask.setSiteBlacklist(["T2_US_PERDUE", "T2_US_UCSD", "T1_TW_ASGC"])
 
-        assert testTask.jobSplittingAlgorithm() == "MadeUpAlgo", \
-               "Error: Wrong job splitting algorithm name."
+        testTask.addInputDataset(primary = "PrimaryDataset",
+                                 processed = "ProcessedDataset",
+                                 tier = "DataTier",
+                                 dbsurl = "DBSURL",
+                                 block_whitelist = ["Block1", "Block2"],
+                                 block_blacklist = ["Block3", "Block4", "Block5"],
+                                 run_whitelist = [1, 2, 3],
+                                 run_blacklist = [4, 5])
 
+        # Make sure we can set individual performance parameters without affecting the others
+        testTask.setJobResourceInformation(timePerEvent = 14)
+
+        self.assertEqual(testTask.jobSplittingAlgorithm(),"MadeUpAlgo",
+               "Error: Wrong job splitting algorithm name.")
+
+        algoParams = testTask.jobSplittingParameters(performance = False)
+        self.assertEqual(len(algoParams), 8,
+                         "Error: Wrong number of algo parameters.")
         algoParams = testTask.jobSplittingParameters()
+        self.assertEqual(len(algoParams), 9,
+                         "Error: Wrong number of algo parameters.")
 
-        assert len(algoParams.keys()) == 6, \
-               "Error: Wrong number of algo parameters."
+        self.assertTrue("algorithm" in algoParams,
+                        "Error: Missing algo parameter.")
+        self.assertEqual(algoParams["algorithm"], "MadeUpAlgo",
+                         "Error: Parameter has wrong value.")
 
-        assert "algorithm" in algoParams.keys(), \
-               "Error: Missing algo parameter."
-        assert algoParams["algorithm"] == "MadeUpAlgo", \
-               "Error: Parameter has wrong value."
-        assert "events_per_job" in algoParams.keys(), \
-               "Error: Missing algo parameter."
-        assert algoParams["events_per_job"] == 100, \
-               "Error: Parameter has wrong value."
-        assert "max_job_size" in algoParams.keys(), \
-               "Error: Missing algo parameter."
-        assert algoParams["max_job_size"] == 24, \
-               "Error: Parameter has wrong value."
-        assert "one_more_param" in algoParams.keys(), \
-               "Error: Missing algo parameter."
-        assert algoParams["one_more_param"] == "Hello", \
-               "Error: Parameter has wrong value."
+        self.assertTrue("events_per_job" in algoParams,
+                        "Error: Missing algo parameter.")
+        self.assertEqual(algoParams["events_per_job"], 100,
+                         "Error: Parameter has wrong value.")
+
+        self.assertTrue("max_job_size" in algoParams,
+                        "Error: Missing algo parameter.")
+        self.assertEqual(algoParams["max_job_size"], 24,
+                         "Error: Parameter has wrong value.")
+
+        self.assertTrue("one_more_param" in algoParams,
+                        "Error: Missing algo parameter.")
+        self.assertEqual(algoParams["one_more_param"], "Hello",
+                         "Error: Parameter has wrong value.")
+
+        self.assertTrue("runWhitelist" in algoParams,
+                        "Error: Missing algo parameter.")
+        self.assertEqual(len(algoParams["runWhitelist"]), 3,
+                         "Error: Wrong number of runs in whitelist.")
+
+        self.assertTrue("performance" in algoParams,
+                        "Error: Missing algo parameter.")
+        self.assertEqual(algoParams["performance"]["timePerEvent"], 14,
+                         "Error: Wrong time per event")
+        self.assertEqual(algoParams["performance"]["memoryRequirement"], 2300000,
+                         "Error: Wrong memory requirement")
+        self.assertEqual(algoParams["performance"]["sizePerEvent"], 512,
+                         "Error: Wrong size per event")
 
         return
 
@@ -286,35 +319,6 @@ class WMTaskTest(unittest.TestCase):
 
         return
 
-
-
-    def testSetGetPriority(self):
-        """
-        _testSetGetPriority_
-
-        Test and see whether we can set and get the
-        priorities in a task.
-        """
-
-        testTask = makeWMTask("TestTask")
-        testTask.setTaskType("Processing")
-
-        # Should be null to start
-        self.assertEqual(testTask.getTaskPriority(), None)
-
-        # Should not accept bad values
-        testTask.setTaskPriority(priority = 'fail')
-        self.assertEqual(testTask.getTaskPriority(), None)
-
-        # Should cast strings
-        testTask.setTaskPriority(priority = '1')
-        self.assertEqual(testTask.getTaskPriority(), 1)
-
-        # Should handle ints
-        testTask.setTaskPriority(priority = 2)
-        self.assertEqual(testTask.getTaskPriority(), 2)
-        return
-
     def testAddNotifications(self):
         """
         _testAddNotifications_
@@ -348,26 +352,32 @@ class WMTaskTest(unittest.TestCase):
                                        gracePeriod = 1)
 
         self.assertEqual(testTask.data.watchdog.monitors, ['PerformanceMonitor'])
-        self.assertEqual(testTask.data.watchdog.PerformanceMonitor.maxRSS,   100)
+        self.assertEqual(testTask.data.watchdog.PerformanceMonitor.maxRSS, 100)
         self.assertEqual(testTask.data.watchdog.PerformanceMonitor.maxVSize, 101)
         self.assertEqual(testTask.data.watchdog.PerformanceMonitor.softTimeout, 100)
         self.assertEqual(testTask.data.watchdog.PerformanceMonitor.hardTimeout, 101)
         return
 
-    def testProcessingVerAndAcquisitionEra(self):
+    def testProcessedDatasetElements(self):
         """
-        _testProcessingVerAndAcquisitionEra_
-        
+        _testProcessedDatasetElements_
+
         Test that we can add a processing version and acquisition era,
         and then get it back.
         """
-        
+
         testTask = makeWMTask("TestTask")
         testTask.setAcquisitionEra("StoneAge")
-        testTask.setProcessingVersion("vLast")
-        
-        self.assertEqual(testTask.getAcquisitionEra(), "StoneAge")
-        self.assertEqual(testTask.getProcessingVersion(), "vLast")
+        testTask.setProcessingVersion(2)
+        testTask.setProcessingString("Test")
+
+        self.assertEqual(testTask.getAcquisitionEra(), "StoneAge",
+                         "Wrong acquisition era in the task")
+        self.assertEqual(testTask.getProcessingVersion(), 2,
+                         "Wrong processing version in the task")
+        self.assertEqual(testTask.getProcessingString(), "Test",
+                         "Wrong processing string in the task")
+
         return
 
     def testParameters(self):
@@ -436,14 +446,15 @@ class WMTaskTest(unittest.TestCase):
         self.assertEqual(testTask.getSubscriptionInformation(), {}, "There should not be any subscription info")
 
         testTask.setSubscriptionInformation(["mercury"], ["mars", "earth"],
-                                            ["earth"], "High",
+                                            ["earth"], "High", "Replica",
                                             "OneParticle")
         subInfo = testTask.getSubscriptionInformation()
 
         outputRecoSubInfo = {"CustodialSites" : ["mercury"],
                              "NonCustodialSites" : ["mars", "earth"],
                              "AutoApproveSites" : ["earth"],
-                             "Priority" : "High"}
+                             "Priority" : "High",
+                             "CustodialSubType" : "Replica"}
         self.assertEqual(subInfo["/OneParticle/DawnOfAnEra-v1/RECO"],
                          outputRecoSubInfo, "The RECO subscription information is wrong")
         self.assertTrue("/OneParticle/DawnOfAnEra-v1/AOD" in subInfo, "The AOD subscription information is wrong")
@@ -487,7 +498,6 @@ class WMTaskTest(unittest.TestCase):
         self.assertEqual(childrenNumber, 2, "Error: Wrong number of children tasks")
 
         return
-
 
 if __name__ == '__main__':
     unittest.main()

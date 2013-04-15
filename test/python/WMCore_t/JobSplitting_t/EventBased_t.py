@@ -9,7 +9,6 @@ import unittest
 
 from WMCore.DataStructs.File import File
 from WMCore.DataStructs.Fileset import Fileset
-from WMCore.DataStructs.Job import Job
 from WMCore.DataStructs.Subscription import Subscription
 from WMCore.DataStructs.Workflow import Workflow
 from WMCore.DataStructs.Run import Run
@@ -62,6 +61,10 @@ class EventBasedTest(unittest.TestCase):
                                                   split_algo = "EventBased",
                                                   type = "Processing")
 
+        self.performanceParams = {'timePerEvent' : 12,
+                                  'memoryRequirement' : 2300,
+                                  'sizePerEvent' : 400}
+
         return
 
     def tearDown(self):
@@ -98,7 +101,8 @@ class EventBasedTest(unittest.TestCase):
         """
         splitter = SplitterFactory()
         jobFactory = splitter(self.emptyFileSubscription)
-        jobGroups = jobFactory(events_per_job = 100)
+        jobGroups = jobFactory(events_per_job = 100,
+                               performance = self.performanceParams)
 
         self.assertEqual(len(jobGroups), 1,
                          "ERROR: JobFactory didn't return one JobGroup")
@@ -122,7 +126,8 @@ class EventBasedTest(unittest.TestCase):
         """
         splitter = SplitterFactory()
         jobFactory = splitter(self.singleFileSubscription)
-        jobGroups = jobFactory(events_per_job = 100)
+        jobGroups = jobFactory(events_per_job = 100,
+                               performance = self.performanceParams)
 
         assert len(jobGroups) == 1, \
                "ERROR: JobFactory didn't return one JobGroup."
@@ -135,7 +140,7 @@ class EventBasedTest(unittest.TestCase):
         assert job.getFiles(type = "lfn") == ["/some/file/name"], \
                "ERROR: Job contains unknown files."
 
-        assert job["mask"].getMaxEvents() == 100, \
+        assert job["mask"].getMaxEvents() is None, \
                "ERROR: Job's max events is incorrect."
 
         assert job["mask"]["FirstEvent"] == 0, \
@@ -153,7 +158,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(self.singleFileSubscription)
 
-        jobGroups = jobFactory(events_per_job = 1000)
+        jobGroups = jobFactory(events_per_job = 1000,
+                               performance = self.performanceParams)
 
         assert len(jobGroups) == 1, \
                "ERROR: JobFactory didn't return one JobGroup."
@@ -166,10 +172,10 @@ class EventBasedTest(unittest.TestCase):
         assert job.getFiles(type = "lfn") == ["/some/file/name"], \
                "ERROR: Job contains unknown files."
 
-        assert job["mask"].getMaxEvents() == 100, \
+        assert job["mask"].getMaxEvents() is None, \
                "ERROR: Job's max events is incorrect."
 
-        assert job["mask"]["FirstEvent"] == 0, \
+        assert job["mask"]["FirstEvent"] is None, \
                "ERROR: Job's first event is incorrect."
 
         return
@@ -185,7 +191,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(self.singleFileSubscription)
 
-        jobGroups = jobFactory(events_per_job = 50)
+        jobGroups = jobFactory(events_per_job = 50,
+                               performance = self.performanceParams)
 
         assert len(jobGroups) == 1, \
                "ERROR: JobFactory didn't return one JobGroup."
@@ -198,7 +205,7 @@ class EventBasedTest(unittest.TestCase):
             assert job.getFiles(type = "lfn") == ["/some/file/name"], \
                    "ERROR: Job contains unknown files."
 
-            assert job["mask"].getMaxEvents() == 50, \
+            assert job["mask"].getMaxEvents() == 50 or job["mask"].getMaxEvents() is None, \
                    "ERROR: Job's max events is incorrect."
 
             assert job["mask"]["FirstEvent"] in [0, 50], \
@@ -220,7 +227,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(self.singleFileSubscription)
 
-        jobGroups = jobFactory(events_per_job = 99)
+        jobGroups = jobFactory(events_per_job = 99,
+                               performance = self.performanceParams)
 
         assert len(jobGroups) == 1, \
                "ERROR: JobFactory didn't return one JobGroup."
@@ -233,7 +241,7 @@ class EventBasedTest(unittest.TestCase):
             assert job.getFiles(type = "lfn") == ["/some/file/name"], \
                    "ERROR: Job contains unknown files."
 
-            self.assertTrue(job["mask"].getMaxEvents() == 99 or job['mask'].getMaxEvents() == 1,
+            self.assertTrue(job["mask"].getMaxEvents() == 99 or job['mask'].getMaxEvents() is None,
                             "ERROR: Job's max events is incorrect.")
 
             assert job["mask"]["FirstEvent"] in [0, 99], \
@@ -255,7 +263,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(self.multipleFileSubscription)
 
-        jobGroups = jobFactory(events_per_job = 100)
+        jobGroups = jobFactory(events_per_job = 100,
+                               performance = self.performanceParams)
 
         assert len(jobGroups) == 1, \
                "ERROR: JobFactory didn't return one JobGroup."
@@ -267,7 +276,7 @@ class EventBasedTest(unittest.TestCase):
             assert len(job.getFiles(type = "lfn")) == 1, \
                    "ERROR: Job contains too many files."
 
-            assert job["mask"].getMaxEvents() == 100, \
+            assert job["mask"].getMaxEvents() is None, \
                    "ERROR: Job's max events is incorrect."
 
             assert job["mask"]["FirstEvent"] == 0, \
@@ -286,7 +295,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(self.multipleFileSubscription)
 
-        jobGroups = jobFactory(events_per_job = 50)
+        jobGroups = jobFactory(events_per_job = 50,
+                               performance = self.performanceParams)
 
         assert len(jobGroups) == 1, \
                "ERROR: JobFactory didn't return one JobGroup."
@@ -298,7 +308,7 @@ class EventBasedTest(unittest.TestCase):
             assert len(job.getFiles(type = "lfn")) == 1, \
                    "ERROR: Job contains too many files."
 
-            assert job["mask"].getMaxEvents() == 50, \
+            assert job["mask"].getMaxEvents() == 50 or job["mask"].getMaxEvents() is None, \
                    "ERROR: Job's max events is incorrect."
 
             assert job["mask"]["FirstEvent"] in [0, 50], \
@@ -317,7 +327,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(self.multipleFileSubscription)
 
-        jobGroups = jobFactory(events_per_job = 150)
+        jobGroups = jobFactory(events_per_job = 150,
+                               performance = self.performanceParams)
 
         assert len(jobGroups) == 1, \
                "ERROR: JobFactory didn't return one JobGroup."
@@ -329,10 +340,10 @@ class EventBasedTest(unittest.TestCase):
             assert len(job.getFiles(type = "lfn")) == 1, \
                    "ERROR: Job contains too many files."
 
-            assert job["mask"].getMaxEvents() == 100, \
+            assert job["mask"].getMaxEvents() is None, \
                    "ERROR: Job's max events is incorrect."
 
-            assert job["mask"]["FirstEvent"] == 0, \
+            assert job["mask"]["FirstEvent"] is None, \
                    "ERROR: Job's first event is incorrect."
     def testMCExactEvents(self):
         """
@@ -346,7 +357,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
 
-        jobGroups = jobFactory(events_per_job = 100)
+        jobGroups = jobFactory(events_per_job = 100,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 1,
@@ -380,7 +392,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
 
-        jobGroups = jobFactory(events_per_job = 1000)
+        jobGroups = jobFactory(events_per_job = 1000,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 1,
@@ -413,7 +426,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
 
-        jobGroups = jobFactory(events_per_job = 99)
+        jobGroups = jobFactory(events_per_job = 99,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 2,
@@ -445,7 +459,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
 
-        jobGroups = jobFactory(events_per_job = 50)
+        jobGroups = jobFactory(events_per_job = 50,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 2,
@@ -477,7 +492,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
 
-        jobGroups = jobFactory(events_per_job = 600)
+        jobGroups = jobFactory(events_per_job = 600,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 1,
@@ -496,7 +512,8 @@ class EventBasedTest(unittest.TestCase):
                                                        lastEvent = 800)
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
-        jobGroups = jobFactory(events_per_job = 6000)
+        jobGroups = jobFactory(events_per_job = 6000,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 1,
@@ -515,7 +532,8 @@ class EventBasedTest(unittest.TestCase):
                                                        lastEvent = 800)
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
-        jobGroups = jobFactory(events_per_job = 599)
+        jobGroups = jobFactory(events_per_job = 599,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 2,
@@ -538,7 +556,8 @@ class EventBasedTest(unittest.TestCase):
                                                        lastEvent = 800)
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
-        jobGroups = jobFactory(events_per_job = 300)
+        jobGroups = jobFactory(events_per_job = 300,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 2,
@@ -569,7 +588,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
 
-        jobGroups = jobFactory(events_per_job = 100)
+        jobGroups = jobFactory(events_per_job = 100,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 1,
@@ -587,7 +607,8 @@ class EventBasedTest(unittest.TestCase):
                                                        lastLumi = 345)
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
-        jobGroups = jobFactory(events_per_job = 1000)
+        jobGroups = jobFactory(events_per_job = 1000,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 1,
@@ -605,7 +626,8 @@ class EventBasedTest(unittest.TestCase):
                                                        lastLumi = 345)
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
-        jobGroups = jobFactory(events_per_job = 99)
+        jobGroups = jobFactory(events_per_job = 99,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 2,
@@ -627,7 +649,8 @@ class EventBasedTest(unittest.TestCase):
                                                        lastLumi = 345)
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
-        jobGroups = jobFactory(events_per_job = 50)
+        jobGroups = jobFactory(events_per_job = 50,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 2,
@@ -661,7 +684,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
 
-        jobGroups = jobFactory(events_per_job = 100, events_per_lumi = 10)
+        jobGroups = jobFactory(events_per_job = 100, events_per_lumi = 10,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 2,
@@ -685,7 +709,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
 
-        jobGroups = jobFactory(events_per_job = 111, events_per_lumi = 10)
+        jobGroups = jobFactory(events_per_job = 111, events_per_lumi = 10,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 2,
@@ -718,7 +743,8 @@ class EventBasedTest(unittest.TestCase):
         jobFactory = splitter(singleMCSubscription)
 
         jobGroups = jobFactory(events_per_job = 2**32 - 1,
-                               events_per_lumi = 2**32 - 1)
+                               events_per_lumi = 2**32 - 1,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 2,
@@ -743,7 +769,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
 
-        jobGroups = jobFactory(events_per_job = 2**31, events_per_lumi = 2**32)
+        jobGroups = jobFactory(events_per_job = 2**31, events_per_lumi = 2**32,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 2,
@@ -769,7 +796,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
 
-        jobGroups = jobFactory(events_per_job = 2**32, events_per_lumi = 2**32)
+        jobGroups = jobFactory(events_per_job = 2**32, events_per_lumi = 2**32,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 1,
@@ -791,7 +819,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
 
-        jobGroups = jobFactory(events_per_job = 3, events_per_lumi = 1)
+        jobGroups = jobFactory(events_per_job = 3, events_per_lumi = 1,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 1,
@@ -813,7 +842,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
 
-        jobGroups = jobFactory(events_per_job = 60, events_per_lumi = 10)
+        jobGroups = jobFactory(events_per_job = 60, events_per_lumi = 10,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 1,
@@ -835,7 +865,8 @@ class EventBasedTest(unittest.TestCase):
         splitter = SplitterFactory()
         jobFactory = splitter(singleMCSubscription)
 
-        jobGroups = jobFactory(events_per_job = 30, events_per_lumi = 10)
+        jobGroups = jobFactory(events_per_job = 30, events_per_lumi = 10,
+                               performance = self.performanceParams)
         self.assertEqual(len(jobGroups), 1,
                          "Error: JobFactory did not return one JobGroup")
         self.assertEqual(len(jobGroups[0].jobs), 2,

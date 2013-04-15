@@ -50,11 +50,13 @@ from WMCore.WorkQueue.WorkQueue                  import localQueue
 from WMCore.WorkQueue.WorkQueueExceptions        import WorkQueueNoMatchingElements
 from WMCore.WorkerThreads.BaseWorkerThread       import BaseWorkerThread
 from WMCore.BossAir.Plugins.gLitePlugin          import getDefaultDelegation
-from WMCore.Credential.Proxy                    import Proxy
+from WMCore.Credential.Proxy                     import Proxy
+from WMComponent.JobCreator.CreateWorkArea       import getMasterName
+from WMComponent.JobCreator.JobCreatorPoller     import retrieveWMSpec
+from WMCore.Services.WMStats.WMStatsWriter       import WMStatsWriter
 
-from WMComponent.JobCreator.CreateWorkArea   import getMasterName
-from WMComponent.JobCreator.JobCreatorPoller import retrieveWMSpec
-from WMCore.Services.WMStats.WMStatsWriter import WMStatsWriter
+from WMCore.DataStructs.MathStructs.DiscreteSummaryHistogram import DiscreteSummaryHistogram
+from WMCore.DataStructs.MathStructs.ContinuousSummaryHistogram import ContinuousSummaryHistogram
 
 class TaskArchiverPollerException(WMException):
     """
@@ -325,49 +327,57 @@ class TaskArchiverPoller(BaseWorkerThread):
 
         #Only delete those where the upload and notification succeeded
         logging.info("Found %d candidate workflows for deletion" % len(finishedwfs))
-        abortedWorkflows = self.centralCouchDBWriter.workflowsByStatus(["aborted"], format = "dict");
-        wfsToDelete = {}
-        for workflow in finishedwfs:
-            try:
-                #Upload summary to couch
-                spec = retrieveWMSpec(wmWorkloadURL = finishedwfs[workflow]["spec"])
-                if not spec:
-                    raise Exception(msg = "Couldn't load spec from %s" % workflow[1])
-                self.archiveWorkflowSummary(spec = spec)
-
-                #Notify the WorkQueue, if there is one
-                if self.workQueue != None:
-                    subList = []
-                    for l in finishedwfs[workflow]["workflows"].values():
-                        subList.extend(l)
-                    self.notifyWorkQueue(subList)
-                
-                #Now we now the workflow as a whole is gone, we can delete the information from couch
-                if not self.useReqMgrForCompletionCheck:
-                    self.wmstatsCouchDB.updateRequestStatus(workflow, "completed")
-                    logging.info("status updated to completed %s" % workflow)
-
-                if workflow in abortedWorkflows:
-                    self.centralCouchDBWriter.updateRequestStatus(workflow, "aborted-completed")
-                    logging.info("status updated to aborted-completed %s" % workflow)
-
-                wfsToDelete[workflow] = {"spec" : spec, "workflows": finishedwfs[workflow]["workflows"]}
-
-            except TaskArchiverPollerException, ex:
-                #Something didn't go well when notifying the workqueue, abort!!!
-                logging.error(str(ex))
-                self.sendAlert(1, msg = str(ex))
-                continue
-            except Exception, ex:
-                #Something didn't go well on couch, abort!!!
-                msg = "Couldn't upload summary for workflow %s, will try again next time\n" % workflow[0]
-                msg += "Nothing will be deleted until the summary is in couch\n"
-                msg += "Exception message: %s" % str(ex)
-                logging.error(msg)
-                self.sendAlert(3, msg = msg)
-                continue
-
-        self.killWorkflows(wfsToDelete)
+        centralCouchAlive = True
+        try:
+            abortedWorkflows = self.centralCouchDBWriter.workflowsByStatus(["aborted"], format = "dict");
+        except Exception, ex:
+           centralCouchAlive = False
+           logging.error("we will try again when remote couch server comes back\n%s" % str(ex))
+        
+        if centralCouchAlive:
+            wfsToDelete = {}
+            for workflow in finishedwfs:
+                try:
+                    #Upload summary to couch
+                    spec = retrieveWMSpec(wmWorkloadURL = finishedwfs[workflow]["spec"])
+                    if not spec:
+                        raise Exception(msg = "Couldn't load spec from %s" % workflow[1])
+                    self.archiveWorkflowSummary(spec = spec)
+    
+                    #Notify the WorkQueue, if there is one
+                    if self.workQueue != None:
+                        subList = []
+                        for l in finishedwfs[workflow]["workflows"].values():
+                            subList.extend(l)
+                        self.notifyWorkQueue(subList)
+                    
+                    #Now we now the workflow as a whole is gone, we can delete the information from couch
+                    if not self.useReqMgrForCompletionCheck:
+                        self.wmstatsCouchDB.updateRequestStatus(workflow, "completed")
+                        logging.info("status updated to completed %s" % workflow)
+    
+                    if workflow in abortedWorkflows:
+                        self.centralCouchDBWriter.updateRequestStatus(workflow, "aborted-completed")
+                        logging.info("status updated to aborted-completed %s" % workflow)
+    
+                    wfsToDelete[workflow] = {"spec" : spec, "workflows": finishedwfs[workflow]["workflows"]}
+    
+                except TaskArchiverPollerException, ex:
+                    #Something didn't go well when notifying the workqueue, abort!!!
+                    logging.error(str(ex))
+                    self.sendAlert(1, msg = str(ex))
+                    continue
+                except Exception, ex:
+                    #Something didn't go well on couch, abort!!!
+                    msg = "Couldn't upload summary for workflow %s, will try again next time\n" % workflow
+                    msg += "Nothing will be deleted until the summary is in couch\n"
+                    msg += "Exception message: %s" % str(ex)
+                    print traceback.format_exc()
+                    logging.error(msg)
+                    self.sendAlert(3, msg = msg)
+                    continue
+    
+            self.killWorkflows(wfsToDelete)
 
         return
 
@@ -499,6 +509,13 @@ class TaskArchiverPoller(BaseWorkerThread):
 
         # Set campaign
         workflowData['campaign'] = spec.getCampaign()
+        # Set inputdataset
+        workflowData['inputdatasets'] = spec.listInputDatasets()
+        # Set histograms
+        histograms = {'workflowLevel' : {'failuresBySite' :
+                                         DiscreteSummaryHistogram('Failed jobs by site', 'Site')},
+                      'taskLevel' : {},
+                      'stepLevel' : {}}
 
         # Get a list of failed job IDs
         # Make sure you get it for ALL tasks in the spec
@@ -525,7 +542,11 @@ class TaskArchiverPoller(BaseWorkerThread):
                                                        "startkey": [workflowName],
                                                        "endkey": [workflowName, {}],
                                                        "group": True})['rows']
-
+        outputListStr = self.fwjrdatabase.loadList("FWJRDump", "workflowOutputTaskMapping",
+                                                "outputByWorkflowName", options = {"startkey": [workflowName],
+                                                                                   "endkey": [workflowName, {}],
+                                                                                   "reduce": False})
+        outputList = json.loads(outputListStr)
         perf = self.handleCouchPerformance(workflowName = workflowName)
         workflowData['performance'] = {}
         for key in perf:
@@ -554,6 +575,7 @@ class TaskArchiverPoller(BaseWorkerThread):
             workflowData['output'][dataset]['nFiles'] = entry['count']
             workflowData['output'][dataset]['size']   = entry['size']
             workflowData['output'][dataset]['events'] = entry['events']
+            workflowData['output'][dataset]['tasks']  = outputList.get(dataset, {}).keys()
 
 
         # Loop over all failed jobs
@@ -573,6 +595,7 @@ class TaskArchiverPoller(BaseWorkerThread):
             loadJobs = self.daoFactory(classname = "Jobs.LoadForTaskArchiver")
             jobList = loadJobs.execute(chunkList)
             for job in jobList:
+                lastRegisteredRetry = None
                 errorCouch = self.fwjrdatabase.loadView("FWJRDump", "errorsByJobID",
                                                         options = {"startkey": [job['id'], 0],
                                                                    "endkey": [job['id'], {}]})['rows']
@@ -594,6 +617,17 @@ class TaskArchiverPoller(BaseWorkerThread):
                     logs   = err['value']['logs']
                     start  = err['value']['start']
                     stop   = err['value']['stop']
+                    errorSite = str(err['value']['site'])
+                    retry = err['value']['retry']
+                    if lastRegisteredRetry is None or lastRegisteredRetry != retry:
+                        histograms['workflowLevel']['failuresBySite'].addPoint(errorSite, 'Failed Jobs')
+                        lastRegisteredRetry = retry
+                    if task not in histograms['stepLevel']:
+                        histograms['stepLevel'][task] = {}
+                    if step not in histograms['stepLevel'][task]:
+                        histograms['stepLevel'][task][step] = {'errorsBySite' : DiscreteSummaryHistogram('Errors by site',
+                                                                                                         'Site')}
+                    errorsBySiteData = histograms['stepLevel'][task][step]['errorsBySite']
                     if not task in workflowData['errors'].keys():
                         workflowData['errors'][task] = {'failureTime': 0}
                     if not step in workflowData['errors'][task].keys():
@@ -609,6 +643,7 @@ class TaskArchiverPoller(BaseWorkerThread):
                                                       "runs":   {},
                                                       "logs":   []}
                         stepFailures[exitCode]['jobs'] += 1 # Increment job counter
+                        errorsBySiteData.addPoint(errorSite, str(exitCode))
                         if len(stepFailures[exitCode]['errors']) == 0 or \
                                exitCode == '99999':
                             # Only record the first error for an exit code
@@ -628,6 +663,27 @@ class TaskArchiverPoller(BaseWorkerThread):
                         for log in logs:
                             if not log in stepFailures[exitCode]["logs"]:
                                 stepFailures[exitCode]["logs"].append(log)
+        # Adding logArchives per task
+        logArchives = self.getLogArchives(spec)
+        workflowData['logArchives'] = logArchives
+
+        jsonHistograms = {'workflowLevel' : {},
+                          'taskLevel' : {},
+                          'stepLevel' : {}}
+        for histogram in histograms['workflowLevel']:
+            jsonHistograms['workflowLevel'][histogram] = histograms['workflowLevel'][histogram].toJSON()
+        for task in histograms['taskLevel']:
+            jsonHistograms['taskLevel'][task] = {}
+            for histogram in histograms['taskLevel'][task]:
+                jsonHistograms['taskLevel'][task][histogram] = histograms['taskLevel'][task][histogram].toJSON()
+        for task in histograms['stepLevel']:
+            jsonHistograms['stepLevel'][task] = {}
+            for step in histograms['stepLevel'][task]:
+                jsonHistograms['stepLevel'][task][step] = {}
+                for histogram in histograms['stepLevel'][task][step]:
+                    jsonHistograms['stepLevel'][task][step][histogram] = histograms['stepLevel'][task][step][histogram].toJSON()
+
+        workflowData['histograms'] = jsonHistograms
 
         # Now we have the workflowData in the right format
         # Time to send them on
@@ -637,7 +693,18 @@ class TaskArchiverPoller(BaseWorkerThread):
         logging.debug("Finished committing workflow summary to couch")
 
         return
+    def getLogArchives(self, spec):
+        """
+        _getLogArchives_
 
+        Gets per Workflow/Task what are the log archives, sends it to the summary to be displayed on the page
+        """        
+        logArchivesTaskStr = self.fwjrdatabase.loadList("FWJRDump", "logCollectsByTask",
+                                                        "logArchivePerWorkflowTask", options = {"reduce" : False},
+                                                        keys = spec.listAllTaskPathNames())
+        logArchivesTask = json.loads(logArchivesTaskStr)
+                                                                        
+        return logArchivesTask
 
     def handleCouchPerformance(self, workflowName):
         """
@@ -648,6 +715,8 @@ class TaskArchiverPoller(BaseWorkerThread):
         perf = self.fwjrdatabase.loadView("FWJRDump", "performanceByWorkflowName",
                                           options = {"startkey": [workflowName],
                                                      "endkey": [workflowName]})['rows']
+                                                     
+        failedJobs = self.getFailedJobs(workflowName)
 
         taskList   = {}
         finalTask  = {}
@@ -666,6 +735,7 @@ class TaskArchiverPoller(BaseWorkerThread):
             final = {}
             for stepName in taskList[taskName].keys():
                 output = {'jobTime': []}
+                outputFailed = {'jobTime': []} # This will be same, but only for failed jobs
                 final[stepName] = {}
                 masterList = []
 
@@ -678,8 +748,13 @@ class TaskArchiverPoller(BaseWorkerThread):
                             continue
                         if not key in output.keys():
                             output[key] = []
+                            if len(failedJobs) > 0 :
+                                outputFailed[key] = []
                         try:
                             output[key].append(float(row[key]))
+                            if (row['jobID'] in failedJobs):
+                                outputFailed[key].append(float(row[key]))
+                                
                         except TypeError:
                             # Why do we get None values here?
                             # We may want to look into it
@@ -692,6 +767,9 @@ class TaskArchiverPoller(BaseWorkerThread):
                         jobTime = row.get('stopTime', None) - row.get('startTime', None)
                         output['jobTime'].append(jobTime)
                         row['jobTime'] = jobTime
+                        # Account job running time here only if the job has failed
+                        if (row['jobID'] in failedJobs):
+                            outputFailed['jobTime'].append(jobTime)
                     except TypeError:
                         # One of those didn't have a real value
                         pass
@@ -727,10 +805,19 @@ class TaskArchiverPoller(BaseWorkerThread):
 
 
                     if key in self.histogramKeys:
+                        # Usual histogram that was always done
                         histogram = MathAlgos.createHistogram(numList = output[key],
                                                               nBins = self.histogramBins,
                                                               limit = self.histogramLimit)
                         final[stepName][key]['histogram'] = histogram
+                        # Histogram only picking values from failed jobs
+                        # Operators  can use it to find out quicker why a workflow/task/step is failing :
+                        if len(failedJobs) > 0 :
+                            failedJobsHistogram = MathAlgos.createHistogram(numList = outputFailed[key],
+                                                                  nBins = self.histogramBins,
+                                                                  limit = self.histogramLimit)
+                                                        
+                            final[stepName][key]['errorsHistogram'] = failedJobsHistogram
                     else:
                         average, stdDev = MathAlgos.getAverageStdDev(numList = output[key])
                         final[stepName][key]['average'] = average
@@ -744,6 +831,18 @@ class TaskArchiverPoller(BaseWorkerThread):
             finalTask[taskName] = final
         return finalTask
 
+    def getFailedJobs(self, workflowName):
+        # We want ALL the jobs, and I'm sorry, CouchDB doesn't support wildcards, above-than-absurd values will do:
+        errorView = self.fwjrdatabase.loadView("FWJRDump", "errorsByWorkflowName",
+                                          options = {"startkey": [workflowName, 0, 0],
+                                                     "endkey": [workflowName, 999999999, 999999]})['rows']
+        failedJobs = []
+        for row in errorView:
+            jobId = row['value']['jobid']
+            if jobId not in failedJobs:
+                failedJobs.append(jobId)
+                
+        return failedJobs
 
     def createAndUploadPublish(self, workflow):
         """

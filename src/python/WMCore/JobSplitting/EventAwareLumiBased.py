@@ -49,6 +49,8 @@ class EventAwareLumiBased(JobFactory):
         runWhitelist    = kwargs.get('runWhitelist', [])
         runs            = kwargs.get('runs', None)
         lumis           = kwargs.get('lumis', None)
+        timePerEvent, sizePerEvent, memoryRequirement = \
+                    self.getPerformanceParameters(kwargs.get('performance', {}))
 
         goodRunList = {}
         if runs and lumis:
@@ -147,6 +149,7 @@ class EventAwareLumiBased(JobFactory):
                 if f['avgEvtsPerLumi'] > eventLimit and f['lumiCount'] == 1:
                     failNextJob = True
                     stopJob = True
+                    lumisPerJob = 1
                 elif splitOnFile:
                     # Then we have to split on every boundary
                     stopJob = True
@@ -191,6 +194,10 @@ class EventAwareLumiBased(JobFactory):
                             if firstLumi != None and firstLumi != lumi:
                                 self.currentJob['mask'].addRunAndLumis(run = run.run,
                                                                        lumis = [firstLumi, lastLumi])
+                                eventsAdded = ((lastLumi - firstLumi + 1) * f['avgEvtsPerLumi'])
+                                runAddedTime = eventsAdded * timePerEvent
+                                runAddedSize = eventsAdded * sizePerEvent
+                                self.currentJob.addResourceEstimates(jobTime = runAddedTime, disk = runAddedSize)
                                 firstLumi = None
                                 lastLumi = None
                             continue
@@ -199,6 +206,10 @@ class EventAwareLumiBased(JobFactory):
                         if lastLumi and not lumi == lastLumi + 1:
                             self.currentJob['mask'].addRunAndLumis(run = run.run,
                                                                    lumis = [firstLumi, lastLumi])
+                            eventsAdded = ((lastLumi - firstLumi + 1) * f['avgEvtsPerLumi'])
+                            runAddedTime = eventsAdded * timePerEvent
+                            runAddedSize = eventsAdded * sizePerEvent
+                            self.currentJob.addResourceEstimates(jobTime = runAddedTime, disk = runAddedSize)
                             firstLumi = None
                             lastLumi = None
 
@@ -214,6 +225,10 @@ class EventAwareLumiBased(JobFactory):
                             if firstLumi != None and lastLumi != None and lastRun != None:
                                 self.currentJob['mask'].addRunAndLumis(run = lastRun,
                                                                        lumis = [firstLumi, lastLumi])
+                                eventsAdded = ((lastLumi - firstLumi + 1) * f['avgEvtsPerLumi'])
+                                runAddedTime = eventsAdded * timePerEvent
+                                runAddedSize = eventsAdded * sizePerEvent
+                                self.currentJob.addResourceEstimates(jobTime = runAddedTime, disk = runAddedSize)
                             msg = None
                             if failNextJob:
                                 msg = "File %s has too many events (%d) in %d lumi(s)" % (f['lfn'],
@@ -221,6 +236,7 @@ class EventAwareLumiBased(JobFactory):
                                                                                           f['lumiCount'])
                             self.newJob(name = self.getJobName(length = totalJobs), failedJob = failNextJob,
                                         failedReason = msg)
+                            self.currentJob.addResourceEstimates(memory = memoryRequirement)
                             failNextJob = False
                             firstLumi = lumi
                             lumisInJob = 0
@@ -252,6 +268,10 @@ class EventAwareLumiBased(JobFactory):
                         # Add this run to the mask
                         self.currentJob['mask'].addRunAndLumis(run = run.run,
                                                                lumis = [firstLumi, lastLumi])
+                        eventsAdded = ((lastLumi - firstLumi + 1) * f['avgEvtsPerLumi'])
+                        runAddedTime = eventsAdded * timePerEvent
+                        runAddedSize = eventsAdded * sizePerEvent
+                        self.currentJob.addResourceEstimates(jobTime = runAddedTime, disk = runAddedSize)
                         firstLumi = None
                         lastLumi = None
 

@@ -17,7 +17,7 @@ import WMCore.RequestManager.RequestDB.Interface.Request.ChangeState as ChangeSt
 import WMCore.RequestManager.RequestDB.Interface.Request.GetRequest as GetRequest
 import WMCore.HTTPFrontEnd.RequestManager.ReqMgrWebTools as Utilities
 from WMCore.HTTPFrontEnd.RequestManager.ReqMgrAuth import ReqMgrAuth
-import WMCore.RequestManager.OpsClipboard.Inject as OpsClipboard
+from WMCore.Database.CMSCouch import Database
 import WMCore.Lexicon
 from WMCore.Wrappers import JsonWrapper
 
@@ -36,31 +36,27 @@ class Assign(WebAPI):
         # Take a guess
         self.templatedir = config.templates
         self.couchUrl = config.couchUrl
-        self.clipboardDB = config.clipboardDB
-        cleanUrl = Utilities.removePasswordFromUrl(self.couchUrl)
-        self.clipboardUrl = "%s/%s/_design/OpsClipboard/index.html" % (cleanUrl, self.clipboardDB)
-        self.opshold = config.opshold
+        self.configDBName = config.configDBName
+        self.workloadDBName = config.workloadDBName
         self.configDBName = config.configDBName
         self.wmstatWriteURL = "%s/%s" % (self.couchUrl.rstrip('/'), config.wmstatDBName)
         if not noSiteDB:
             self.sites = Utilities.sites(config.sitedb)
         else:
             self.sites = []
-        self.allMergedLFNBases =  [
-            "/store/backfill/1", "/store/backfill/2",
-            "/store/data",  "/store/mc", "/store/generator", "/store/relval"]
+        # yet 0.9.40 had also another self.mergedLFNBases which was differentiating
+        # list of mergedLFNBases based on type of request, removed and all bases
+        # will be displayed regardless of the request type (discussion with Edgar) 
+        self.allMergedLFNBases = [
+            "/store/backfill/1",
+            "/store/backfill/2",
+            "/store/data",
+            "/store/mc",
+            "/store/generator",
+            "/store/relval",
+            "/store/hidata",
+            "/store/himc"]
         self.allUnmergedLFNBases = ["/store/unmerged", "/store/temp"]
-
-        self.mergedLFNBases = {
-             "ReReco" : ["/store/backfill/1", "/store/backfill/2", "/store/data"],
-             "DataProcessing" : ["/store/backfill/1", "/store/backfill/2", "/store/data"],
-             "ReDigi" : ["/store/backfill/1", "/store/backfill/2", "/store/data", "/store/mc"],
-             "MonteCarlo" : ["/store/backfill/1", "/store/backfill/2", "/store/mc"],
-             "RelValMC" : ["/store/backfill/1", "/store/backfill/2", "/store/mc"],
-             "Resubmission" : ["/store/backfill/1", "/store/backfill/2", "/store/mc", "/store/data"],
-             "MonteCarloFromGEN" : ["/store/backfill/1", "/store/backfill/2", "/store/mc"],
-             "TaskChain": ["/store/backfill/1", "/store/backfill/2", "/store/mc", "/store/data", "/store/relval"],
-             "LHEStepZero": ["/store/backfill/1", "/store/backfill/2", "/store/generator"]}
 
         self.yuiroot = config.yuiroot
         cherrypy.engine.subscribe('start_thread', self.initThread)
@@ -78,10 +74,25 @@ class Assign(WebAPI):
         # Get it from the DBFormatter superclass
         myThread.dbi = self.dbi
 
-    def validate(self, v, name=''):
-        """ Checks if alphanumeric, tolerating spaces """
+    def validate(self, v, name = ""):
+        """
+        _validate_
+
+        Checks different fields with different Lexicon methods,
+        if not the field name is not known then apply the identifier check
+        """
+
+        #Make sure the value is a string, otherwise the Lexicon complains
+        strValue = str(v)
         try:
-            WMCore.Lexicon.identifier(v)
+            if name == "ProcessingVersion":
+                WMCore.Lexicon.procversion(strValue)
+            elif name == "AcquisitionEra":
+                WMCore.Lexicon.acqname(strValue)
+            elif name == "ProcessingString":
+                WMCore.Lexicon.procstring(strValue)
+            else:
+                WMCore.Lexicon.identifier(strValue)
         except AssertionError:
             raise cherrypy.HTTPError(400, "Bad input %s" % name)
         return v
@@ -103,23 +114,36 @@ class Assign(WebAPI):
 
         procVer = ""
         acqEra = ""
+        procString = ""
         helper = Utilities.loadWorkload(request)
         if helper.getAcquisitionEra() != None:
             acqEra = helper.getAcquisitionEra()
-            if helper.getProcessingVersion() != None:
-                procVer = helper.getProcessingVersion()
+        if helper.getProcessingVersion() != None:
+            procVer = helper.getProcessingVersion()
+        if helper.getProcessingString():
+            procString = helper.getProcessingString()
         dashboardActivity = helper.getDashboardActivity()
+        blockCloseMaxWaitTime = helper.getBlockCloseMaxWaitTime()
+        blockCloseMaxFiles = helper.getBlockCloseMaxFiles()
+        blockCloseMaxEvents = helper.getBlockCloseMaxEvents()
+        blockCloseMaxSize = helper.getBlockCloseMaxSize()
 
         (reqMergedBase, reqUnmergedBase) = helper.getLFNBases()
-        return self.templatepage("Assign", requests=[request], teams=teams,
-                                 assignments=assignments, sites=self.sites,
-                                 mergedLFNBases=self.mergedLFNBases[requestType],
-                                 reqMergedBase=reqMergedBase,
-                                 unmergedLFNBases=self.allUnmergedLFNBases,
-                                 reqUnmergedBase=reqUnmergedBase,
+
+        return self.templatepage("Assign", requests = [request], teams = teams,
+                                 assignments = assignments, sites = self.sites,
+                                 mergedLFNBases = self.allMergedLFNBases,
+                                 reqMergedBase = reqMergedBase,
+                                 unmergedLFNBases = self.allUnmergedLFNBases,
+                                 reqUnmergedBase = reqUnmergedBase,
                                  acqEra = acqEra, procVer = procVer,
-                                 dashboardActivity=dashboardActivity,
-                                 badRequests=[])
+                                 procString = procString,
+                                 dashboardActivity = dashboardActivity,
+                                 badRequests = [],
+                                 blockCloseMaxWaitTime = blockCloseMaxWaitTime,
+                                 blockCloseMaxFiles = blockCloseMaxFiles,
+                                 blockCloseMaxSize = blockCloseMaxSize,
+                                 blockCloseMaxEvents = blockCloseMaxEvents)
 
     @cherrypy.expose
     @cherrypy.tools.secmodv2(role=ReqMgrAuth.assign_roles)
@@ -131,11 +155,16 @@ class Assign(WebAPI):
 
         procVer = ""
         acqEra = ""
+        procString = ""
         dashboardActivity = None
         badRequestNames = []
         goodRequests = []
         reqMergedBase = None
         reqUnmergedBase = None
+        blockCloseMaxWaitTime = 66400
+        blockCloseMaxFiles = 500
+        blockCloseMaxEvents = 250000000
+        blockCloseMaxSize = 5000000000000
         for request in allRequests:
             # make sure there's a workload attached
             try:
@@ -152,26 +181,39 @@ class Assign(WebAPI):
                             acqEra = helper.getAcquisitionEra()
                         if helper.getProcessingVersion() != None:
                             procVer = helper.getProcessingVersion()
+                        if helper.getProcessingString() != None:
+                            procString = helper.getProcessingString()
+                        blockCloseMaxWaitTime = helper.getBlockCloseMaxWaitTime()
+                        blockCloseMaxFiles = helper.getBlockCloseMaxFiles()
+                        blockCloseMaxEvents = helper.getBlockCloseMaxEvents()
+                        blockCloseMaxSize = helper.getBlockCloseMaxSize()
                         (reqMergedBase, reqUnmergedBase) = helper.getLFNBases()
                         dashboardActivity = helper.getDashboardActivity()
                         goodRequests.append(request)
                     except Exception, ex:
                         logging.error("Assign error: %s " % str(ex))
-                        badRequests.append(request["RequestName"])
+                        badRequestNames.append(request["RequestName"])
                 else:
                     goodRequests.append(request)
-        return self.templatepage("Assign", all=all, requests=goodRequests, teams=teams,
-                                 assignments=[], sites=self.sites,
-                                 mergedLFNBases=self.allMergedLFNBases,
-                                 reqMergedBase=reqMergedBase,
-                                 unmergedLFNBases=self.allUnmergedLFNBases,
-                                 reqUnmergedBase=reqUnmergedBase,
+
+        return self.templatepage("Assign", all = all, requests = goodRequests, teams = teams,
+                                 assignments = [], sites = self.sites,
+                                 mergedLFNBases = self.allMergedLFNBases,
+                                 reqMergedBase = reqMergedBase,
+                                 unmergedLFNBases = self.allUnmergedLFNBases,
+                                 reqUnmergedBase = reqUnmergedBase,
                                  acqEra = acqEra, procVer = procVer,
-                                 dashboardActivity=dashboardActivity,
-                                 badRequests=badRequestNames)
+                                 procString = procString,
+                                 dashboardActivity = dashboardActivity,
+                                 badRequests = badRequestNames,
+                                 blockCloseMaxWaitTime = blockCloseMaxWaitTime,
+                                 blockCloseMaxFiles = blockCloseMaxFiles,
+                                 blockCloseMaxSize = blockCloseMaxSize,
+                                 blockCloseMaxEvents = blockCloseMaxEvents)
 
     @cherrypy.expose
-    @cherrypy.tools.secmodv2(role=ReqMgrAuth.assign_roles)
+    #@cherrypy.tools.secmodv2(role=ReqMgrAuth.assign_roles) security issue fix
+    @cherrypy.tools.secmodv2(role=Utilities.security_roles(), group = Utilities.security_groups())
     def handleAssignmentPage(self, **kwargs):
         """ handler for the main page """
         #Accept Json encoded strings
@@ -211,18 +253,6 @@ class Assign(WebAPI):
                 if priority != '':
                     Utilities.changePriority(requestName, priority, self.wmstatWriteURL)
         participle=kwargs['action']+'ed'
-        if self.opshold and kwargs['action'] == 'Assign':
-            participle='put into "ops-hold" state (see <a href="%s">OpsClipboard</a>)' % self.clipboardUrl
-            # this, previously used, call made all requests injected into OpsClipboard to
-            # have campaign_id null since the call doesn't propagate request's
-            # CampaignName at all, AcquisitionEra remains default null and probably
-            # a bunch of other things is wrong too
-            #requests = [GetRequest.getRequestByName(requestName) for requestName in requestNames]
-            requests = [Utilities.requestDetails(requestName) for requestName in requestNames]
-            OpsClipboard.inject(self.couchUrl, self.clipboardDB, *requests)
-            for request in requestNames:
-                ChangeState.changeRequestStatus(requestName, 'ops-hold', wmstatUrl = self.wmstatWriteURL)
-
         return self.templatepage("Acknowledge", participle=participle, requests=requestNames)
 
 
@@ -230,12 +260,18 @@ class Assign(WebAPI):
         """ Make all the necessary changes in the Workload to reflect the new assignment """
         request = GetRequest.getRequestByName(requestName)
         helper = Utilities.loadWorkload(request)
-        for field in ["AcquisitionEra", "ProcessingVersion"]:
+
+        #Validate the different parts of the processed dataset
+        processedDatasetParts = ["AcquisitionEra", "ProcessingVersion"]
+        if kwargs.get("ProcessingString", None):
+            processedDatasetParts.append("ProcessingString")
+        for field in processedDatasetParts:
             if type(kwargs[field]) == dict:
                 for value in kwargs[field].values():
                     self.validate(value, field)
             else:
                 self.validate(kwargs[field], field)
+
         # Set white list and black list
         whiteList = kwargs.get("SiteWhitelist", [])
         blackList = kwargs.get("SiteBlacklist", [])
@@ -244,6 +280,7 @@ class Assign(WebAPI):
         # Set ProcessingVersion and AcquisitionEra, which could be json encoded dicts
         helper.setProcessingVersion(kwargs["ProcessingVersion"])
         helper.setAcquisitionEra(kwargs["AcquisitionEra"])
+        helper.setProcessingString(kwargs.get("ProcessingString", None))
         #FIXME not validated
         helper.setLFNBase(kwargs["MergedLFNBase"], kwargs["UnmergedLFNBase"])
         helper.setMergeParameters(int(kwargs.get("MinMergeSize", 2147483648)),
@@ -251,23 +288,47 @@ class Assign(WebAPI):
                                   int(kwargs.get("MaxMergeEvents", 50000)))
         helper.setupPerformanceMonitoring(int(kwargs.get("maxRSS", 2411724)),
                                           int(kwargs.get("maxVSize", 2411724)),
-                                          int(kwargs.get("SoftTimeout", 171600)),
+                                          int(kwargs.get("SoftTimeout", 129600)),
                                           int(kwargs.get("GracePeriod", 300)))
+
+        # Check whether we should check location for the data
+        if "useSiteListAsLocation" in kwargs:
+            helper.setLocationDataSourceFlag()
+
         # Set phedex subscription information
         custodialList = kwargs.get("CustodialSites", [])
         nonCustodialList = kwargs.get("NonCustodialSites", [])
-        if "AutoApprove" in kwargs:
-            autoApproveList = nonCustodialList
-        else:
-            autoApproveList = []
-        priority = kwargs.get("Priority", "Low")
-        if priority not in ["Low", "Normal", "High"]:
+        autoApproveList = kwargs.get("AutoApproveSubscriptionSites", [])
+        subscriptionPriority = kwargs.get("SubscriptionPriority", "Low")
+        if subscriptionPriority not in ["Low", "Normal", "High"]:
             raise cherrypy.HTTPError(400, "Invalid subscription priority")
+        subscriptionType = kwargs.get("CustodialSubType", "Move")
+        if subscriptionType not in ["Move", "Replica"]:
+            raise cherrypy.HTTPError(400, "Invalid custodial subscription type")
 
         helper.setSubscriptionInformationWildCards(wildcardDict = self.wildcardSites,
                                                    custodialSites = custodialList,
                                                    nonCustodialSites = nonCustodialList,
                                                    autoApproveSites = autoApproveList,
-                                                   priority = priority)
+                                                   custodialSubType = subscriptionType,
+                                                   priority = subscriptionPriority)
+
+        # Block closing information
+        blockCloseMaxWaitTime = int(kwargs.get("BlockCloseMaxWaitTime", helper.getBlockCloseMaxWaitTime()))
+        blockCloseMaxFiles = int(kwargs.get("BlockCloseMaxFiles", helper.getBlockCloseMaxFiles()))
+        blockCloseMaxEvents = int(kwargs.get("BlockCloseMaxEvents", helper.getBlockCloseMaxEvents()))
+        blockCloseMaxSize = int(kwargs.get("BlockCloseMaxSize", helper.getBlockCloseMaxSize()))
+
+        helper.setBlockCloseSettings(blockCloseMaxWaitTime, blockCloseMaxFiles,
+                                     blockCloseMaxEvents, blockCloseMaxSize)
+
         helper.setDashboardActivity(kwargs.get("dashboard", ""))
         Utilities.saveWorkload(helper, request['RequestWorkflow'], self.wmstatWriteURL)
+        
+        # update AcquisitionEra in the Couch document (#4380)
+        # request object returned above from Oracle doesn't have information Couch
+        # database
+        reqDetails = Utilities.requestDetails(request["RequestName"])
+        couchDb = Database(reqDetails["CouchWorkloadDBName"], reqDetails["CouchURL"])
+        couchDb.updateDocument(request["RequestName"], "ReqMgr", "updaterequest",
+                               fields={"AcquisitionEra": reqDetails["AcquisitionEra"]})

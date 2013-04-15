@@ -1,11 +1,11 @@
-#!/usr/bin/env python
 """
 _GetRequest_
-
 
 API to get requests from the DB
 
 """
+
+
 import logging
 import WMCore.RequestManager.RequestDB.Connection as DBConnect
 import WMCore.RequestManager.RequestDB.Interface.Request.ListRequests as ListRequests
@@ -48,29 +48,21 @@ def getRequest(requestId, reverseTypes=None, reverseStatus=None):
     getUser = factory(classname = "Requestor.GetUserFromAssoc")
     userData = getUser.execute(reqData['requestor_group_id'])
     request = Request()
-    request["ReqMgrRequestID"] = reqData['request_id']
     request["RequestName"] = requestName
     request["RequestType"] = reverseTypes[reqData['request_type']]
     request["RequestStatus"] = reverseStatus[reqData['request_status']]
     request["RequestPriority"] = reqData['request_priority']
-    request["ReqMgrRequestBasePriority"] = reqData['request_priority']
     request["RequestWorkflow"] = reqData['workflow']
     request["RequestNumEvents"] = reqData['request_num_events']
     request["RequestSizeFiles"] = reqData['request_size_files']
-    request["RequestEventSize"] = reqData['request_event_size']
-
+    # there used to be RequestEventSize argument, but then SizePerEvent
+    # got introduce and got adopted so this is replacing it, presenting
+    # this nomenclature inconsistency on Oracle level
+    request["SizePerEvent"] = reqData['request_event_size']
+    request["PrepID"] = reqData['prep_id']
+    
     request["Group"] = groupData['group_name']
-    request["ReqMgrGroupID"] = groupData['group_id']
-    request["ReqMgrGroupBasePriority"] = \
-                        groupData['group_base_priority']
     request["Requestor"] = userData['requestor_hn_name']
-    request["ReqMgrRequestorID"] = userData['requestor_id']
-    request["ReqMgrRequestorBasePriority"] = \
-                                userData['requestor_base_priority']
-    request["RequestPriority"] = \
-      request['RequestPriority'] + groupData['group_base_priority']
-    request["RequestPriority"] = \
-      request['RequestPriority'] + userData['requestor_base_priority']
 
     updates = ChangeState.getProgress(requestName)
     request['percent_complete'], request['percent_success'] = percentages(updates)
@@ -88,16 +80,26 @@ def getRequest(requestId, reverseTypes=None, reverseStatus=None):
     request['InputDatasetTypes'] = datasetsIn
     request['InputDatasets'] = datasetsIn.keys()
     request['OutputDatasets'] = datasetsOut
+    
+    # fetch AcquisitionEra from spec, it's not stored in Oracle at all
+    import WMCore.HTTPFrontEnd.RequestManager.ReqMgrWebTools as Utilities
+    try:
+        helper = Utilities.loadWorkload(request)
+        request["AcquisitionEra"] = str(helper.getAcquisitionEra())
+    except Exception, ex:
+        logging.error("Could not check workload for %s, reason: %s" %
+                      (request["RequestName"], ex))
     return request
+
 
 def requestID(requestName):
     """ Finds the ReqMgr database ID for a request """
     factory = DBConnect.getConnection()
     f =  factory(classname = "Request.FindByName")
-    id = f.execute(requestName)
-    if id == None:
+    reqId = f.execute(requestName)
+    if reqId == None:
         raise HTTPError(404, 'Given requestName not found')
-    return id
+    return reqId
 
 def getRequestByName(requestName):
     return getRequest(requestID(requestName))
@@ -113,14 +115,6 @@ def percentages(updates):
             percent_success = update['percent_success']
     return percent_complete, percent_success
 
-def getRequestDetails(requestName):
-    """ Return a dict with the intimate details of the request """
-    requestId = requestID(requestName)
-    request = getRequest(requestId)
-    request['Assignments'] = getAssignmentsByName(requestName)
-    request['RequestMessages'] = ChangeState.getMessages(requestName)
-    request['RequestUpdates'] = ChangeState.getProgress(requestName)
-    return request
 
 def getRequests():
     """ This only fills the details needed to make succint browser tables,
@@ -158,18 +152,6 @@ def getRequestDetails(requestName):
             request['percent_success'] = update['percent_success']
     return request
 
-def getAllRequestDetails():
-    requests = ListRequests.listRequests()
-    result = []
-    for request in requests:
-        requestName = request['RequestName']
-        details = getRequestDetails(requestName)
-        # take out excessive information
-        del details['RequestUpdates']
-        del details['RequestMessages']
-        result.append(details)
-    return result
-
 
 def getRequestAssignments(requestId):
     """
@@ -190,9 +172,9 @@ def getRequestsByCriteria(classname, criterion):
     reverseTypes, reverseStatus = reverseLookups()
     return [getRequest(requestId[0], reverseTypes, reverseStatus) for requestId in requestIds]
 
+
 def getAssignmentsByName(requestName):
-    request = getRequestByName(requestName)
-    reqID = request['ReqMgrRequestID']
+    reqID = requestID(requestName)
     assignments = getRequestAssignments(reqID)
     return [assignment['TeamName'] for assignment in assignments]
 

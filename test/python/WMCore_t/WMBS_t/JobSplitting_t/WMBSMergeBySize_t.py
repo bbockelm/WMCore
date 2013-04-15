@@ -6,7 +6,6 @@ Unit tests for generic WMBS merging.
 """
 
 import unittest
-import os
 import threading
 
 from WMCore.WMBS.File import File
@@ -19,9 +18,7 @@ from WMCore.WMBS.Workflow import Workflow
 from WMCore.DataStructs.Run import Run
 
 from WMCore.DAOFactory import DAOFactory
-from WMCore.WMFactory import WMFactory
 from WMCore.JobSplitting.SplitterFactory import SplitterFactory
-from WMCore.Services.UUID import makeUUID
 from WMQuality.TestInit import TestInit
 
 class WMBSMergeBySize(unittest.TestCase):
@@ -64,6 +61,7 @@ class WMBSMergeBySize(unittest.TestCase):
         """
         locationAction = self.daoFactory(classname = "Locations.New")
         locationAction.execute(siteName = "s1", seName = "somese.cern.ch")
+        locationAction.execute(siteName = "s1", seName = "somese2.cern.ch")
 
         changeStateDAO = self.daoFactory(classname = "Jobs.ChangeState")
 
@@ -386,8 +384,10 @@ class WMBSMergeBySize(unittest.TestCase):
             jobFiles = job.getFiles()
 
             if len(jobFiles) == len(goldenFilesA):
+                self.assertEqual(job["estimatedDiskUsage"], 7)
                 goldenFiles = goldenFilesA
             else:
+                self.assertEqual(job["estimatedDiskUsage"], 4)
                 goldenFiles = goldenFilesB
 
             currentRun = 0
@@ -397,7 +397,7 @@ class WMBSMergeBySize(unittest.TestCase):
                 file.loadData()
                 assert file["lfn"] in goldenFiles, \
                        "Error: Unknown file: %s" % file["lfn"]
-                assert file["locations"] == set(["somese.cern.ch"]), \
+                assert file["locations"] == set(["somese.cern.ch", "somese2.cern.ch"]), \
                        "Error: File is missing a location."
                 goldenFiles.remove(file["lfn"])
 
@@ -452,6 +452,8 @@ class WMBSMergeBySize(unittest.TestCase):
         assert len(result[0].jobs) == 1, \
                "ERROR: One job should have been returned."
 
+        self.assertEqual(result[0].jobs[0]["estimatedDiskUsage"], 7)
+
         jobFiles = list(result[0].jobs)[0].getFiles()
 
         goldenFiles = ["file1", "file2", "file3", "file4", "fileA", "fileB",
@@ -466,7 +468,7 @@ class WMBSMergeBySize(unittest.TestCase):
         for file in jobFiles:
             assert file["lfn"] in goldenFiles, \
                    "Error: Unknown file: %s" % file["lfn"]
-            assert file["locations"] == set(["somese.cern.ch"]), \
+            assert file["locations"] == set(["somese.cern.ch", "somese2.cern.ch"]), \
                    "Error: File is missing a location."
             goldenFiles.remove(file["lfn"])
 
@@ -528,10 +530,13 @@ class WMBSMergeBySize(unittest.TestCase):
             jobFiles = job.getFiles()
 
             if jobFiles[0]["lfn"] in goldenFilesA:
+                self.assertEqual(job["estimatedDiskUsage"], 4)
                 goldenFiles = goldenFilesA
             elif jobFiles[0]["lfn"] in goldenFilesB:
+                self.assertEqual(job["estimatedDiskUsage"], 3)
                 goldenFiles = goldenFilesB
             else:
+                self.assertEqual(job["estimatedDiskUsage"], 4)
                 goldenFiles = goldenFilesC
 
             currentRun = 0
@@ -540,7 +545,7 @@ class WMBSMergeBySize(unittest.TestCase):
             for file in jobFiles:
                 assert file["lfn"] in goldenFiles, \
                        "Error: Unknown file in merge jobs."
-                assert file["locations"] == set(["somese.cern.ch"]), \
+                assert file["locations"] == set(["somese.cern.ch", "somese2.cern.ch"]), \
                        "Error: File is missing a location."
 
                 goldenFiles.remove(file["lfn"])
@@ -604,13 +609,15 @@ class WMBSMergeBySize(unittest.TestCase):
         goldenFilesB = ["fileA", "fileB", "fileC"]
         goldenFilesC = ["fileI", "fileII", "fileIII", "fileIV"]
 
+        self.assertEqual(result[0].jobs[0]["estimatedDiskUsage"], 7)
+
         jobFiles = list(result[0].jobs)[0].getFiles()
 
         currentRun = 0
         currentLumi = 0
         currentEvent = 0
         for file in jobFiles:
-            assert file["locations"] == set(["somese.cern.ch"]), \
+            assert file["locations"] == set(["somese.cern.ch", "somese2.cern.ch"]), \
                    "Error: File is missing a location."
 
             if file["lfn"] in goldenFilesA:
@@ -680,10 +687,13 @@ class WMBSMergeBySize(unittest.TestCase):
             jobFiles = job.getFiles()
 
             if jobFiles[0]["lfn"] in goldenFilesA:
+                self.assertEqual(job["estimatedDiskUsage"], 4)
                 goldenFiles = goldenFilesA
             elif jobFiles[0]["lfn"] in goldenFilesB:
+                self.assertEqual(job["estimatedDiskUsage"], 3)
                 goldenFiles = goldenFilesB
             else:
+                self.assertEqual(job["estimatedDiskUsage"], 4)
                 goldenFiles = goldenFilesC
 
             currentRun = 0
@@ -692,7 +702,7 @@ class WMBSMergeBySize(unittest.TestCase):
             for file in jobFiles:
                 assert file["lfn"] in goldenFiles, \
                        "Error: Unknown file in merge jobs."
-                assert file["locations"] == set(["somese.cern.ch"]), \
+                assert file["locations"] == set(["somese.cern.ch", "somese2.cern.ch"]), \
                        "Error: File is missing a location: %s" % file["locations"]
 
                 goldenFiles.remove(file["lfn"])
@@ -752,6 +762,8 @@ class WMBSMergeBySize(unittest.TestCase):
         assert len(result[0].jobs) == 1, \
                "ERROR: One job should have been returned."
 
+        self.assertEqual(result[0].jobs[0]["estimatedDiskUsage"], 7)
+
         goldenFilesA = ["file1", "file2", "file3", "file4"]
         goldenFilesB = ["fileA", "fileB", "fileC"]
         goldenFilesC = ["fileI", "fileII", "fileIII", "fileIV"]
@@ -762,7 +774,7 @@ class WMBSMergeBySize(unittest.TestCase):
         currentLumi = 0
         currentEvent = 0
         for file in jobFiles:
-            assert file["locations"] == set(["somese.cern.ch"]), \
+            assert file["locations"] == set(["somese.cern.ch", "somese2.cern.ch"]), \
                    "Error: File is missing a location."
 
             if file["lfn"] in goldenFilesA:
@@ -814,6 +826,8 @@ class WMBSMergeBySize(unittest.TestCase):
         """
         locationAction = self.daoFactory(classname = "Locations.New")
         locationAction.execute(siteName = "s1", seName = "somese.cern.ch")
+        locationAction.execute(siteName = "s1", seName = "somese2.cern.ch")
+
 
         mergeFilesetA = Fileset(name = "mergeFilesetA")
         mergeFilesetB = Fileset(name = "mergeFilesetB")
@@ -1024,10 +1038,10 @@ class WMBSMergeBySize(unittest.TestCase):
         self.stuffWMBS()
 
         locationAction = self.daoFactory(classname = "Locations.New")
-        locationAction.execute(siteName = "s2", seName = "somese2.cern.ch")
+        locationAction.execute(siteName = "s2", seName = "somese3.cern.ch")
 
         fileSite2 = File(lfn = "fileSite2", size = 4098, events = 1024,
-                         first_event = 0, locations = set(["somese2.cern.ch"]))
+                         first_event = 0, locations = set(["somese3.cern.ch"]))
         fileSite2.addRun(Run(1, *[46]))
         fileSite2.create()
         fileSite2.addParent(self.parentFileSite2["lfn"])
@@ -1053,7 +1067,8 @@ class WMBSMergeBySize(unittest.TestCase):
             baseLocation = list(firstInputFile["locations"])[0]
 
             for inputFile in job.getFiles():
-                assert len(inputFile["locations"]) == 1, \
+                assert inputFile["locations"] == set(["somese.cern.ch", "somese2.cern.ch"]) or \
+                       inputFile["locations"] == set(["somese3.cern.ch"]), \
                        "Error: Wrong number of locations"
 
                 assert list(inputFile["locations"])[0] == baseLocation, \

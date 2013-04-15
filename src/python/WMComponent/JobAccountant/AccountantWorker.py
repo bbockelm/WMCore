@@ -19,7 +19,6 @@ import logging
 import gc
 import collections
 
-from WMCore.Agent.Configuration  import Configuration
 from WMCore.FwkJobReport.Report  import Report
 from WMCore.DAOFactory           import DAOFactory
 from WMCore.WMConnectionBase     import WMConnectionBase
@@ -28,11 +27,14 @@ from WMCore.WMException          import WMException
 from WMCore.DataStructs.Run import Run
 from WMCore.WMBS.File       import File
 from WMCore.WMBS.Job        import Job
-from WMCore.WMBS.JobGroup   import JobGroup
 
 from WMCore.JobStateMachine.ChangeState import ChangeState
 from WMComponent.DBS3Buffer.DBSBufferFile import DBSBufferFile
 from WMCore.Services.PhEDEx.PhEDEx import PhEDEx
+from WMCore.Services.WMStats.WMStatsWriter import WMStatsWriter
+from WMCore.Database.CMSCouch import CouchServer
+from WMCore.Lexicon import sanitizeURL
+from WMCore.WMSpec.WMWorkload import newWorkload
 
 class AccountantWorkerException(WMException):
     """
@@ -72,6 +74,7 @@ class AccountantWorker(WMConnectionBase):
         self.jobCompleteInput        = self.daofactory(classname = "Jobs.CompleteInput")
         self.setBulkOutcome          = self.daofactory(classname = "Jobs.SetOutcomeBulk")
         self.getWorkflowSpec         = self.daofactory(classname = "Workflow.GetSpecAndNameFromTask")
+        self.getJobInfoByID         = self.daofactory(classname = "Jobs.LoadFromID")
 
         self.dbsStatusAction = self.dbsDaoFactory(classname = "DBSBufferFiles.SetStatus")
         self.dbsParentStatusAction = self.dbsDaoFactory(classname = "DBSBufferFiles.GetParentStatus")
@@ -81,7 +84,8 @@ class AccountantWorker(WMConnectionBase):
         self.dbsInsertLocation = self.dbsDaoFactory(classname = "DBSBufferFiles.AddLocation")
         self.dbsSetChecksum    = self.dbsDaoFactory(classname = "DBSBufferFiles.AddChecksumByLFN")
         self.dbsSetRunLumi     = self.dbsDaoFactory(classname = "DBSBufferFiles.AddRunLumi")
-        self.insertWorkflow    = self.dbsDaoFactory(classname = "InsertWorkflow")
+        self.dbsUpdateSpec = self.dbsDaoFactory(classname = "UpdateSpec")
+        self.dbsInsertWorkflow = self.dbsDaoFactory(classname = "InsertWorkflow")
 
         self.dbsNewAlgoAction    = self.dbsDaoFactory(classname = "NewAlgo")
         self.dbsNewDatasetAction = self.dbsDaoFactory(classname = "NewDataset")
@@ -98,6 +102,12 @@ class AccountantWorker(WMConnectionBase):
 
         # Store location for the specs for DBS
         self.specDir = getattr(config.JobAccountant, 'specDir', None)
+        
+        jobDBurl = sanitizeURL(config.JobStateMachine.couchurl)['url']
+        jobDBName = config.JobStateMachine.couchDBName
+        jobCouchdb  = CouchServer(jobDBurl)
+        self.fwjrCouchDB = jobCouchdb.connectDatabase("%s/fwjrs" % jobDBName)
+        self.localWMStats = WMStatsWriter(config.TaskArchiver.localWMStatsURL)
 
         # Hold data for later commital
         self.dbsFilesToCreate  = []
@@ -386,6 +396,7 @@ class AccountantWorker(WMConnectionBase):
             fwjrFile["first_event"] = 0
 
         if jobType == "Merge" and fwjrFile["module_label"] != "logArchive":
+            setattr(fwjrFile["fileRef"], 'merged', True)
             fwjrFile["merged"] = True
 
         wmbsFile = self.createFileFromDataStructsFile(file = fwjrFile, jobID = jobID)
@@ -426,8 +437,19 @@ class AccountantWorker(WMConnectionBase):
                                                 transaction = self.existingTransaction())
 
         fileList = fwkJobReport.getAllFiles()
-
+        
+        bookKeepingSuccess = True
+        
         for fwjrFile in fileList:
+            # associate logArchived file for parent jobs on wmstats assuming fileList is length is 1.
+            if jobType == "LogCollect":
+                try:
+                    self.associateLogCollectToParentJobsInWMStats(fwkJobReport, fwjrFile["lfn"], fwkJobReport.getTaskName())
+                except Exception, ex:
+                    bookKeepingSuccess = False
+                    logging.error("Error occurred: associating log collect location, will try again\n %s" % str(ex))
+                    break
+                
             wmbsFile = self.addFileToWMBS(jobType, fwjrFile, wmbsJob["mask"],
                                           jobID = jobID, task = fwkJobReport.getTaskName())
             merged = fwjrFile['merged']
@@ -441,13 +463,39 @@ class AccountantWorker(WMConnectionBase):
             for outputFileset in outputFilesets:
                 self.filesetAssoc.append({"lfn": wmbsFile["lfn"], "fileset": outputFileset})
 
-        # Only save once job is done, and we're sure we made it through okay
-        self._mapLocation(wmbsJob['fwjr'])
-        self.listOfJobsToSave.append(wmbsJob)
+        if bookKeepingSuccess:
+            # Only save once job is done, and we're sure we made it through okay
+            self._mapLocation(wmbsJob['fwjr'])
+            self.listOfJobsToSave.append(wmbsJob)
         #wmbsJob.save()
 
         return
-
+    
+    def associateLogCollectToParentJobsInWMStats(self, fwkJobReport, logAchiveLFN, task):
+        inputFileList = fwkJobReport.getAllInputFiles()
+        requestName = task.split('/')[1]
+        keys = []
+        for inputFile in inputFileList:
+            keys.append([requestName, inputFile["lfn"]])
+        resultRows = self.fwjrCouchDB.loadView("FWJRDump", 'jobsByOutputLFN', 
+                                               options = {"stale": "update_after"},
+                                               keys = keys)['rows']
+        #get data from wmbs
+        parentWMBSJobIDs = []
+        for row in resultRows:
+            parentWMBSJobIDs.append({"jobid": row["value"]})
+        #update Job doc in wmstats
+        results = self.getJobInfoByID.execute(parentWMBSJobIDs)
+        parentJobNames = []
+        
+        if type(results) == list:
+            for jobInfo in results:
+                parentJobNames.append(jobInfo['name'])
+        else:
+            parentJobNames.append(results['name'])
+        
+        self.localWMStats.updateLogArchiveLFN(parentJobNames, logAchiveLFN)
+       
     def handleFailed(self, jobID, fwkJobReport):
         """
         _handleFailed_
@@ -490,6 +538,7 @@ class AccountantWorker(WMConnectionBase):
             for outputFileset in outputFilesets:
                 self.filesetAssoc.append({"lfn": wmbsFile["lfn"], "fileset": outputFileset})
 
+        self._mapLocation(wmbsJob['fwjr'])
         self.listOfJobsToFail.append(wmbsJob)
 
         return
@@ -583,7 +632,6 @@ class AccountantWorker(WMConnectionBase):
                             workflowID = wf['workflowID']
                             break
                 if not workflowID:
-                    # Then we have to insert the workflow by hand
                     # Copy the spec to the DBSBuffer spec dir, if not possible
                     # then don't store the spec in the DBSBuffer database
                     if self.specDir:
@@ -601,9 +649,28 @@ class AccountantWorker(WMConnectionBase):
                             specPath = None
                     else:
                         specPath = None
-                    workflowID = self.insertWorkflow.execute(requestName = workflowName,
-                                                             taskPath    = taskPath,
-                                                             specPath    = specPath)
+                    workflowID = self.dbsUpdateSpec.execute(requestName = workflowName,
+                                                            taskPath = taskPath,
+                                                            specPath = specPath)
+                    if not workflowID:
+                        logging.error("The DBSBuffer database doesn't have a record for the workflow %s" % workflowName)
+                        logging.error("This shouldn't happen, the JobAccountant will read the spec and insert the proper record")
+                        if not specPath:
+                            logging.error("No spec either, nothing to do but insert some defaults")
+                            workflowID = self.dbsInsertWorkflow.execute(workflowName, taskPath,
+                                                                       66400,
+                                                                       500,
+                                                                       250000000,
+                                                                       5000000000000)
+                        else:
+                            workload = newWorkload(workflowName)
+                            workload.load(specPath)
+                            workflowID = self.dbsInsertWorkflow.execute(workflowName, taskPath,
+                                                                       workload.getBlockCloseMaxWaitTime(),
+                                                                       workload.getBlockCloseMaxFiles(),
+                                                                       workload.getBlockCloseMaxEvents(),
+                                                                       workload.getBlockCloseMaxSize(),
+                                                                       specPath)
                     self.workflowPaths.append(workflowPath)
                     self.workflowIDs.append({'workflowPath': workflowPath, 'workflowID': workflowID})
 
@@ -625,8 +692,6 @@ class AccountantWorker(WMConnectionBase):
                 for entry in selfChecksums.keys():
                     dbsCksumBinds.append({'lfn': lfn, 'cksum' : selfChecksums[entry],
                                           'cktype' : entry})
-
-
 
         try:
 

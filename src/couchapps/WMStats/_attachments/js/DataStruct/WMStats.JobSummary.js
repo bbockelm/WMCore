@@ -17,7 +17,9 @@ WMStats.JobSummary = function (couchData) {
                                             if (typeof(statusSummary.site) === "object") {
                                                 statusSummary.site = "{}";
                                             }
-                                            statusSummary.errorMsg = data.rows[i].key[5];
+                                            statusSummary.acdcURL = data.rows[i].key[5];
+                                            statusSummary.agentName = data.rows[i].key[6];
+                                            statusSummary.errorMsg = data.rows[i].key[7];
                                             statusSummary.count = data.rows[i].value;
                                             jobSummary.status.push(statusSummary)
                                         }
@@ -27,4 +29,4 @@ WMStats.JobSummary = function (couchData) {
     if (couchData) jobSummaryData.setData(couchData);
     
     return jobSummaryData;
-}
+};
