@@ -311,19 +311,31 @@ class WorkQueueBackend(object):
                 pass
 
 
-    def availableWork(self, conditions, teams = None, wfs = None):
-        """Get work which is available to be run"""
+    def availableWork(self, thresholds, site_job_counts, teams = None, wfs = None):
+        """
+        Get work which is available to be run
+
+        Assume thresholds is a dictionary; keys are the site name, values are
+        the maximum number of running jobs at that site.
+
+        Assumes site_job_counts is a dictionary-of-dictionaries; keys are the site
+        name and task priorities.  The value is the number of jobs running at that
+        priority.
+        """
         elements = []
-        for site in conditions.keys():
-            if not conditions[site] > 0:
-                del conditions[site]
-        if not conditions:
-            return elements, conditions
+
+        # We used to pre-filter sites, looking to see if there are idle job slots
+        # We don't do this anymore, as we may over-allocate
+        # jobs to sites if the new jobs have a higher priority.
+
+        # If there are no sites, punt early.
+        if not site_job_counts:
+            return elements, thresholds, site_job_counts
 
         options = {}
         options['include_docs'] = True
         options['descending'] = True
-        options['resources'] = conditions
+        options['resources'] = thresholds
         if teams:
             options['teams'] = teams
         if wfs:
@@ -337,24 +349,45 @@ class WorkQueueBackend(object):
         else:
             result = self.db.loadList('WorkQueue', 'workRestrictions', 'availableByPriority', options)
             result = json.loads(result)
+
+        # Iterate through the results; apply whitelist / blacklist / data
+        # locality restrictions.  Only assign jobs if they are high enough
+        # priority.
+        new_elements = 0
+        last_prio = None
         for i in result:
             element = CouchWorkQueueElement.fromDocument(self.db, i)
-            elements.append(element)
-
-            # Remove 1st random site that can run work
-            names = conditions.keys()
-            random.shuffle(names)
-            for site in names:
-                if element.passesSiteRestriction(site):
-                    slots_left = conditions[site] - element['Jobs']
-                    if slots_left > 0:
-                        conditions[site] = slots_left
-                    else:
-                        conditions.pop(site, None)
+            prio = element['Priority']
+            if last_prio == None:
+                last_prio = prio
+            elif last_prio > prio:
+                # If we iterate through an entire priority level and find no
+                # possible sites, then we break; we will only see lower-prio
+                # jobs in the future.
+                if new_elements == 0:
                     break
-            if not conditions:
-                break
-        return elements, conditions
+                new_elements = 0
+                last_prio = prio
+
+            possibleSite = None
+            sites = site_job_count.keys()
+            random.shuffle(sites)
+            for site in sites if site in thresholds and element.passesSiteRestriction(site):
+                # Count the number of jobs currently running of greater priority
+                prio = element['Priority']
+                cur_job_count = sum(map(lambda x : x[1] if x[0] > prio else 0, site_job_counts.items()))
+                if cur_job_count < thresholds[site]:
+                    possibleSite = site
+                    break
+
+            if possibleSite:
+                elements.append(element)
+                new_elements += 1
+                site_job_counts[site][prio] = site_job_counts[site].setdefault(prio, 0) + element['Jobs']
+
+        if not new_elements:
+            return [], {}, {}
+        return elements, thresholds, site_job_counts
 
     def getActiveData(self):
         """Get data items we have work in the queue for"""

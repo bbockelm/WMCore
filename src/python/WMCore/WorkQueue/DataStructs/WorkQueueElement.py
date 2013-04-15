@@ -222,3 +222,4 @@ class WorkQueueElement(dict):
         if site in self['SiteBlacklist']:
             return False
         return True
+
