@@ -214,7 +214,7 @@ class RemoteCondorPlugin(BasePlugin):
         self.glexecUnwrapScript = getattr(config.BossAir, 'glexecUnwrapScript', None)
         self.gsisshOptions = ["-o", "ForwardX11=no","-o", "ProxyCommand=none", "-o", "ControlPath=none"]
         #self.remoteUserHost = "se2.accre.vanderbilt.edu"
-        self.remoteUserHost  = "submit-2.t2.ucsd.edu"
+        self.remoteUserHost  = getattr(config.BossAir, 'remoteUserHost', 'submit-2.t2.ucsd.edu')
         self.jdlProxyFile    = None # Proxy name to put in JDL (owned by submit user)
         self.glexecProxyFile = None # Copy of same file owned by submit user
 
@@ -387,7 +387,7 @@ class RemoteCondorPlugin(BasePlugin):
         command += " mkdir -p %s" % (" ".join(targetDirs))
         return command
 
-    def makeRenameCommand(self, targetFiles, postfix = 'temp'):
+    def makeRenameCommand(self, targetFiles, postfix = '-temp'):
         wrapper = self.getCommandWrapper()
 
         wrapssh = "%s %s %s" % (wrapper, self.ssh, " ".join(self.gsisshOptions))
@@ -395,18 +395,18 @@ class RemoteCondorPlugin(BasePlugin):
         # make sure there's a condor work directory on remote host
         command = "%s %s '" % (wrapssh, self.remoteUserHost)
         for file in targetFiles:
-            command += " rename %s-%s %s %s-%s || true;" % (file[1], postfix, file[1], file[1], postfix)
+            command += " rename %s%s %s %s%s || true;" % (file[1], postfix, file[1], file[1], postfix)
         command += "'"
         return command
     
-    def makeScpOutwardCommand(self, targetFiles, postfix = 'temp'):
+    def makeScpOutwardCommand(self, targetFiles, postfix = '-temp'):
         wrapper = self.getCommandWrapper()
         
         wrapscp = "%s %s %s" % (wrapper, self.scp, " ".join(self.gsisshOptions))
         commands = []
         for onefile in targetFiles:
             assert os.path.exists( onefile[0] )
-            commands.append('%s %s %s:%s-%s' % \
+            commands.append('%s %s %s:%s%s' % \
                             (wrapscp, onefile[0], self.remoteUserHost, onefile[1], postfix))
 
         return ' && '.join(commands)
@@ -632,6 +632,32 @@ class RemoteCondorPlugin(BasePlugin):
         nsubmit = 1
         return nsubmit, jdlFile, queueError, jobList
 
+    def submitRaw(self, randomID, jdl, proxyFile, fileList):
+        # if you're like Brian and you want to make the JDLs yourself
+        # doesn't use the pool since we're at most submitting a job at a time 
+        mkdirCommand = self.makeMkdirCommand([randomID])
+        filesToMove = [jdl, "%s/%s" % (randomID, 'submit.jdl')]
+        for onefile in fileList:
+            filesToMove.append([onefile, "%s/%s" % (randomID, onefile)])
+        scpCommand = self.makeScpOutwardCommand(filesToMove, '')
+        subCommand = self.makeSubmitcommand("%s/%s" % (randomID, 'submit.jdl'))
+        totalCommand = "export X509_USER_PROXY=%s " % proxyFile
+        totalCommand += " && ".join(mkdirCommand, scpCommand, subCommand)
+        proc = subprocess.Popen(totalCommand, stderr = subprocess.PIPE,
+                                    stdout = subprocess.PIPE, shell = False)
+        stdout, stderr = proc.communicate()
+        if not proc.returncode == 0:
+            # Then things have gotten bad - condor_rm is not responding
+            logging.error("failed to submit job: returned non-zero value %s" % str(proc.returncode))
+            logging.error("command")
+            logging.error(totalCommand)
+            logging.error("stdout")
+            logging.error(stdout)
+            logging.error("stderr")
+            logging.error(stderr)
+            raise RuntimeError, "Failed to submit\nStdout: %s\nStderr: %s" % (stdout, stderr)
+
+    
     def checkCondorResponse(self, jobs, nSubmits, timeout):
         failedJobs     = []
         successfulJobs = []
@@ -769,8 +795,10 @@ class RemoteCondorPlugin(BasePlugin):
         runningList  = []
         noInfoFlag   = False
 
-        # Get the job
+        # Get the jobs from condor
         jobInfo = self.getClassAds()
+        # make it into a rad dict
+        jobInfo = self.sortClassAdsByJobID(jobInfo)
         if not jobInfo:
             return runningList, changeList, completeList
         if len(jobInfo.keys()) == 0:
@@ -835,11 +863,11 @@ class RemoteCondorPlugin(BasePlugin):
                 #Check if we have a valid status time
                 if not job['status_time']:
                     if job['status'] == 'Running':
-                        job['status_time'] = jobAd.get('runningTime', 0)
+                        job['status_time'] = jobAd.get('JobStartDate', 0)
                     elif job['status'] == 'Idle':
-                        job['status_time'] = jobAd.get('submitTime', 0)
+                        job['status_time'] = jobAd.get('QDate', 0)
                     else:
-                        job['status_time'] = jobAd.get('stateTime', 0)
+                        job['status_time'] = jobAd.get('EnteredCurrentStatus', 0)
                     changeList.append(job)
 
                 runningList.append(job)
@@ -938,11 +966,13 @@ class RemoteCondorPlugin(BasePlugin):
 
         return
 
-    def kill(self, jobs, info = None):
+    def kill(self, jobs, info = None, constraint = None):
         """
         Kill a list of jobs based on the WMBS job names
 
         """
+        if not constraint:
+            constraint = '"WMAgent_JobID =?= %i"' % jobID
 
         for job in jobs:
             jobID = job['jobid']
@@ -950,7 +980,7 @@ class RemoteCondorPlugin(BasePlugin):
             command.extend( self.gsisshOptions )
             # TODO: batch these commands
             command.append(" ".join(['condor_rm', '-constraint',\
-                                     '"WMAgent_JobID =?= %i"' % jobID]))
+                                     constraint]))
             proc = subprocess.Popen(command, stderr = subprocess.PIPE,
                                     stdout = subprocess.PIPE, shell = False)
             stdout, stderr = proc.communicate()
@@ -1187,22 +1217,26 @@ class RemoteCondorPlugin(BasePlugin):
             self.locationDict[jobSite] = siteInfo[0].get('ce_name', None)
         return self.locationDict[jobSite]
 
-    def getClassAds(self):
+    def getClassAds(self, constraint = None, attribs = None):
         """
         _getClassAds_
 
         Grab classAds from condor_q using xml parsing
         """
+        if not constraint:
+            constraint = '\'WMAgent_AgentName == "%s" && WMAgent_JobID =!= UNDEFINED\''
+        if not attribs:
+            attribs = [ 'JobStatus', 'EnteredCurrentStatus',\
+                        'JobStartDate', 'QDate', 'WMAgent_JobID' ]
         jobInfo = {}
         command = [self.ssh, self.remoteUserHost]
         command.extend( self.gsisshOptions )
-        command.append(" ".join(['condor_q', '-constraint', '"WMAgent_JobID =!= UNDEFINED"',
-                   '-constraint', '\'WMAgent_AgentName == \"%s\"\'' % (self.agent),
-                   '-format', '"(JobStatus:\%s)  "', 'JobStatus',
-                   '-format', '"(stateTime:\%s)  "', 'EnteredCurrentStatus',
-                   '-format', '"(runningTime:\%s)  "', 'JobStartDate',
-                   '-format', '"(submitTime:\%s)  "', 'QDate',
-                   '-format', '"(WMAgentID:\%d):::"',  'WMAgent_JobID']))
+        extraString = "condor_q -constraint %s " % constraint
+        attribList = []
+        for attrib in attribs:
+            attribList.extend(['-format', '"(%s:\%s)  "', attrib])
+        extraString += " ".join(attribList)
+        command.append(extraString)
 
         print " ".join( command )
         pipe = subprocess.Popen(command, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = False)
@@ -1225,7 +1259,8 @@ class RemoteCondorPlugin(BasePlugin):
         if classAdsRaw == '':
             # We have no jobs
             return jobInfo
-
+        
+        classAdList = []
         for ad in classAdsRaw:
             # There should be one for every job
             if not re.search("\(", ad):
@@ -1242,16 +1277,20 @@ class RemoteCondorPlugin(BasePlugin):
                 key = str(statement.split(':')[0])
                 value = statement.split(':')[1].split(')')[0]
                 tmpDict[key] = value
-            if not 'WMAgentID' in tmpDict.keys():
+            classAdList.append(tmpDict)
+        return classAdList
+
+    def sortClassAdsByJobID(inputList):
+        jobInfo = {}
+        for tmpDict in inputList:
+            if not 'WMAgent_JobID' in tmpDict.keys():
                 # Then we have an invalid job somehow
                 logging.error("Invalid job discovered in condor_q")
                 logging.error(tmpDict)
                 continue
             else:
-                jobInfo[int(tmpDict['WMAgentID'])] = tmpDict
+                jobInfo[int(tmpDict['WMAgent_JobID'])] = tmpDict
 
         logging.info("Retrieved %i classAds" % len(jobInfo))
-
-
         return jobInfo
 
