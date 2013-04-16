@@ -155,7 +155,7 @@ class RemoteCondorPlugin(BasePlugin):
 
         return stateDict
 
-    def __init__(self, config):
+    def __init__(self, config, **kwargs):
 
         self.config = config
 
@@ -164,9 +164,20 @@ class RemoteCondorPlugin(BasePlugin):
         self.locationDict = {}
 
         myThread = threading.currentThread()
-        daoFactory = DAOFactory(package="WMCore.WMBS", logger = myThread.logger,
-                                dbinterface = myThread.dbi)
-        self.locationAction = daoFactory(classname = "Locations.GetSiteInfo")
+        if 'logger' in kwargs:
+            logger = kwargs['logger']
+        else:
+            logger = myThread.logger
+        if hasattr(myThread, 'dbi'):
+            dbi = myThread.dbi
+        else:
+            dbi = None
+        if dbi:
+            daoFactory = DAOFactory(package="WMCore.WMBS", logger = logger,
+                                    dbinterface = dbi)
+            self.locationAction = daoFactory(classname = "Locations.GetSiteInfo")
+        else:
+            self.locationAction = None
 
 
         self.packageDir = None
@@ -179,6 +190,7 @@ class RemoteCondorPlugin(BasePlugin):
             self.unpacker = os.path.join(getWMBASE(),
                                          'WMCore/WMRuntime/Unpacker.py')
 
+        config.section_("Agent")
         self.agent         = getattr(config.Agent, 'agentName', 'WMAgent')
         self.sandbox       = None
         self.scriptFile    = None
@@ -405,7 +417,8 @@ class RemoteCondorPlugin(BasePlugin):
         wrapscp = "%s %s %s" % (wrapper, self.scp, " ".join(self.gsisshOptions))
         commands = []
         for onefile in targetFiles:
-            assert os.path.exists( onefile[0] )
+            if not os.path.exists( onefile[0] ):
+                raise BossAirPluginException("Missing file to scp: %s" % onefile[0])
             commands.append('%s %s %s:%s%s' % \
                             (wrapscp, onefile[0], self.remoteUserHost, onefile[1], postfix))
 

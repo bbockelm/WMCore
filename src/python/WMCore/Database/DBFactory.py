@@ -1,11 +1,18 @@
 
 import threading
 
-from sqlalchemy import create_engine
-from sqlalchemy import __version__ as sqlalchemy_version
-from WMCore.Database.Dialects import MySQLDialect
-from WMCore.Database.Dialects import SQLiteDialect
-from WMCore.Database.Dialects import OracleDialect
+try:
+    from sqlalchemy import create_engine
+    from sqlalchemy import __version__ as sqlalchemy_version
+    from WMCore.Database.Dialects import MySQLDialect
+    from WMCore.Database.Dialects import SQLiteDialect
+    from WMCore.Database.Dialects import OracleDialect
+except ImportError:
+    create_engine = None
+    sqlalchemy_version = None
+    MySQLDialect = None
+    SQLiteDialect = None
+    OracleDialect = None
 
 class DBFactory(object):
 

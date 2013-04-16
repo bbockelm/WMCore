@@ -4,9 +4,18 @@ A basic action is a thing that will run a SQL statement
 A more complex one would be something that ran multiple SQL
 objects to produce a single output.
 """
-from WMCore.Database.Dialects import MySQLDialect
-from WMCore.Database.Dialects import SQLiteDialect
-from WMCore.Database.Dialects import OracleDialect
+try:
+    from WMCore.Database.Dialects import MySQLDialect
+except ImportError:
+    MySQLDialect = None
+try:
+    from WMCore.Database.Dialects import SQLiteDialect
+except ImportError:
+    SQLiteDialect = None
+try:
+    from WMCore.Database.Dialects import OracleDialect
+except ImportError:
+    OracleDialect = None
 
 class DAOFactory(object):
     def __init__(self, package='WMCore', logger=None, dbinterface=None, owner=""):
