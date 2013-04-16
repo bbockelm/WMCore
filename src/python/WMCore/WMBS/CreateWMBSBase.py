@@ -178,6 +178,7 @@ class CreateWMBSBase(DBCreator):
           """CREATE TABLE wmbs_sub_types (
                id   INTEGER      PRIMARY KEY AUTO_INCREMENT,
                name VARCHAR(255) NOT NULL,
+               priority INTEGER DEFAULT 0,
                UNIQUE(name))"""
 
         self.create["09wmbs_subscription"] = \
@@ -436,13 +437,13 @@ class CreateWMBSBase(DBCreator):
                 (jobState)
             self.inserts["job_state_%s" % jobState] = jobStateQuery
 
-        self.subTypes = ["Processing", "Merge", "Harvesting", "Cleanup",
-                         "LogCollect", "Skim", "Analysis", "Production",
-                         "MultiProcessing", "MultiProduction"]
-        for i in range(len(self.subTypes)):
-            subTypeQuery = """INSERT INTO wmbs_sub_types (name)
-                                VALUES ('%s')""" % (self.subTypes[i])
-            self.inserts["wmbs_sub_types_%s" % self.subTypes[i]] = subTypeQuery
+        self.subTypes = [("Processing", 0), ("Merge", 5), ("Harvesting", 3), ("Cleanup", 5),
+                         ("LogCollect", 3), ("Skim", 3), ("Analysis", 0), ("Production", 0),
+                         ("MultiProcessing", 0), ("MultiProduction", 0)]
+        for pair in self.subTypes:
+            subTypeQuery = """INSERT INTO wmbs_sub_types (name, priority)
+                                VALUES ('%s', %d)""" % (pair[0], pair[1])
+            self.inserts["wmbs_sub_types_%s" % pair[0]] = subTypeQuery
 
         locationStates = ["Normal", "Down", "Draining", "Aborted"]
 
