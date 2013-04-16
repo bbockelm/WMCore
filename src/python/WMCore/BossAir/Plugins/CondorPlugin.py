@@ -721,10 +721,6 @@ class CondorPlugin(BasePlugin):
 
         return
 
-
-
-
-
     # Start with submit functions
 
 
@@ -905,6 +901,12 @@ class CondorPlugin(BasePlugin):
         if job.get('requestName', None):
             jdl.append('+WMAgent_RequestName = "%s"\n' % job['requestName'])
 
+        if job.get('taskName', None):
+            jdl.append('+WMAgent_SubTaskName = "%s"\n' % job['taskName'])
+
+        if job.get('subTaskType', None):
+            jdl.append('+WMAgent_SubTaskType = "%s"\n' % job['taskType'])
+
         # Performance estimates
         if job.get('estimatedJobTime', None):
             jdl.append('+MaxWallTimeMins = %d\n' % int(job['estimatedJobTime']/60.0))
@@ -927,19 +929,12 @@ class CondorPlugin(BasePlugin):
             self.locationDict[jobSite] = siteInfo[0].get('ce_name', None)
         return self.locationDict[jobSite]
 
-
-
-
-
     def getClassAds(self):
         """
         _getClassAds_
 
         Grab classAds from condor_q using xml parsing
         """
-
-        constraint = "\"WMAgent_JobID =!= UNDEFINED\""
-
 
         jobInfo = {}
 
@@ -952,7 +947,7 @@ class CondorPlugin(BasePlugin):
                    '-format', '(WMAgentID:\%d):::',  'WMAgent_JobID']
 
         pipe = subprocess.Popen(command, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = False)
-        stdout, stderr = pipe.communicate()
+        stdout, _ = pipe.communicate()
         classAdsRaw = stdout.split(':::')
 
         if not pipe.returncode == 0:
@@ -960,7 +955,6 @@ class CondorPlugin(BasePlugin):
             logging.error("condor_q returned non-zero value %s" % str(pipe.returncode))
             logging.error("Skipping classAd processing this round")
             return None
-
 
         if classAdsRaw == '':
             # We have no jobs
@@ -991,6 +985,5 @@ class CondorPlugin(BasePlugin):
                 jobInfo[int(tmpDict['WMAgentID'])] = tmpDict
 
         logging.info("Retrieved %i classAds" % len(jobInfo))
-
 
         return jobInfo
