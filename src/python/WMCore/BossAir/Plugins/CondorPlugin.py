@@ -721,6 +721,29 @@ class CondorPlugin(BasePlugin):
 
         return
 
+    def updateJobInformation(self, workflow, task, **kwargs):
+        """
+        _updateJobInformation_
+
+        Update job information for all jobs in the workflow and task,
+        the change will take effect if the job is Idle or becomes idle.
+
+        The currently supported changes are only priority for which both the task (taskPriority)
+        and workflow priority (requestPriority) must be provided.
+        """
+        if 'taskPriority' in kwargs and 'requestPriority' in kwargs:
+            # Do a priority update
+            priority = (int(kwargs['requestPriority']) + int(kwargs['taskPriority'])*self.maxTaskPriority)
+            command = ['condor_qedit', '-constraint', 'WMAgent_SubTaskName == \"%s\"' % task,
+                       '-constraint', 'WMAgent_RequestName == \"%s\"' % workflow,
+                       'JobPrio', str(priority)]
+            proc = subprocess.Popen(command, stderr = subprocess.PIPE,
+                                    stdout = subprocess.PIPE)
+            _, _ = proc.communicate()
+            if proc.returncode != 0:
+                raise BossAirPluginException('condor_qedit failed with exit code %d' % proc.returncode)
+        return
+
     # Start with submit functions
 
 

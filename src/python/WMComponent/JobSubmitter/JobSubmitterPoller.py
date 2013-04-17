@@ -125,6 +125,7 @@ class JobSubmitterPoller(BaseWorkerThread):
         self.setLocationAction = self.daoFactory(classname = "Jobs.SetLocation")
         self.locationAction = self.daoFactory(classname = "Locations.GetSiteInfo")
         self.setFWJRPathAction = self.daoFactory(classname = "Jobs.SetFWJRPath")
+        self.listWorkflows = self.daoFactory(classname = "Workflow.ListForSubmitter")
 
         # Keep a record of the thresholds in memory
         self.currentRcThresholds = {}
@@ -245,6 +246,12 @@ class JobSubmitterPoller(BaseWorkerThread):
         """
         badJobs = dict([(x, []) for x in range(61101,61104)])
         dbJobs = set()
+
+        logging.info("Refreshing priority cache...")
+        workflows = self.listWorkflows.execute()
+        workflows = filter(lambda x: x['name'] in self.workflowPrios, workflows)
+        for workflow in workflows:
+            self.workflowPrios[workflow['name']] = workflow['priority']
 
         logging.info("Querying WMBS for jobs to be submitted...")
         newJobs = self.listJobsAction.execute()
@@ -373,7 +380,6 @@ class JobSubmitterPoller(BaseWorkerThread):
                        loadedJob.get("estimatedJobTime", None),
                        loadedJob.get("estimatedDiskUsage", None),
                        loadedJob.get("estimatedMemoryUsage", None),
-                       newJob['task_priority'],
                        newJob['task_name'])
 
             self.jobDataCache[workflowName][jobID] = jobInfo
@@ -671,8 +677,8 @@ class JobSubmitterPoller(BaseWorkerThread):
                                'estimatedJobTime' : cachedJob[14],
                                'estimatedDiskUsage' : cachedJob[15],
                                'estimatedMemoryUsage' : cachedJob[16],
-                               'taskPriority' : cachedJob[17],
-                               'taskName' : cachedJob[18]}
+                               'taskPriority' : self.workflowPrios[workflow],
+                               'taskName' : cachedJob[17]}
 
                     # Add to jobsToSubmit
                     jobsToSubmit[package].append(jobDict)
