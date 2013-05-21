@@ -132,7 +132,7 @@ def uploadWorker(input, results, dbsUrl):
 
         # Do stuff with DBS
         try:
-            logging.error("About to call insert block with block: %s" % block)
+            logging.debug("About to call insert block with block: %s" % block)
             dbsApi.insertBulkBlock(blockDump = block)
             results.put({'name': name, 'success': True})
         except Exception, ex:
@@ -181,7 +181,7 @@ class DBSUploadPoller(BaseWorkerThread):
 
         # This is slightly dangerous, but DBSUpload depends
         # on DBSInterface anyway
-        self.dbsUrl           = self.config.DBSUpload.dbsUrl
+        self.dbsUrl           = self.config.DBS3Upload.dbsUrl
 
         self.dbsUtil = DBSBufferUtil()
 
@@ -189,12 +189,12 @@ class DBSUploadPoller(BaseWorkerThread):
         self.pool   = []
         self.input  = None
         self.result = None
-        self.nProc  = getattr(self.config.DBSUpload, 'nProcesses', 4)
-        self.wait   = getattr(self.config.DBSUpload, 'dbsWaitTime', 1)
-        self.nTries = getattr(self.config.DBSUpload, 'dbsNTries', 300)
-        self.dbs3UploadOnly = getattr(self.config.DBSUpload, "dbs3UploadOnly", False)
-        self.physicsGroup   = getattr(self.config.DBSUpload, "physicsGroup", "NoGroup")
-        self.datasetType    = getattr(self.config.DBSUpload, "datasetType", "PRODUCTION")
+        self.nProc  = getattr(self.config.DBS3Upload, 'nProcesses', 4)
+        self.wait   = getattr(self.config.DBS3Upload, 'dbsWaitTime', 1)
+        self.nTries = getattr(self.config.DBS3Upload, 'dbsNTries', 300)
+        self.dbs3UploadOnly = getattr(self.config.DBS3Upload, "dbs3UploadOnly", False)
+        self.physicsGroup   = getattr(self.config.DBS3Upload, "physicsGroup", "NoGroup")
+        self.datasetType    = getattr(self.config.DBS3Upload, "datasetType", "PRODUCTION")
         self.blockCount     = 0
 
         # List of blocks currently in processing
@@ -209,8 +209,8 @@ class DBSUploadPoller(BaseWorkerThread):
 
         self.filesToUpdate = []
 
-        self.produceCopy = getattr(self.config.DBSUpload, 'copyBlock', False)
-        self.copyPath    = getattr(self.config.DBSUpload, 'copyBlockPath',
+        self.produceCopy = getattr(self.config.DBS3Upload, 'copyBlock', False)
+        self.copyPath    = getattr(self.config.DBS3Upload, 'copyBlockPath',
                                    '/data/mnorman/block.json')
 
         return
@@ -668,12 +668,17 @@ class DBSUploadPoller(BaseWorkerThread):
             replaceKeys(block, 'NumberOfFiles', 'file_count')
             replaceKeys(block, 'location', 'origin_site_name')
             for key in ['insertedFiles', 'newFiles', 'DatasetAlgo', 'file_count',
-                        'block_size', 'origin_site_name', 'creation_date', 'open', 'Name', 'block_events']:
+                        'block_size', 'origin_site_name', 'creation_date', 'open', 'Name',
+                        'block.block_events', 'close_settings']:
+                if '.' in key:
+                    firstkey, subkey = key.split('.', 1)
+                    if firstkey in block.data and subkey in block.data[firstkey]:
+                        del block.data[firstkey][subkey]
                 if key in block.data.keys():
                     del block.data[key]
 
             encodedBlock = block.data
-            logging.info("About to insert block %s" % encodedBlock)
+            logging.info("About to insert block %s" % block.getName())
             self.input.put({'name': block.getName(), 'block': encodedBlock})
             self.blockCount += 1
             if self.produceCopy:

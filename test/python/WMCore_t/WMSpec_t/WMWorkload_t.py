@@ -240,12 +240,10 @@ class WMWorkloadTest(unittest.TestCase):
         workload.setValidStatus(validStatus = name)
         workload.setProcessingVersion(processingVersions = name)
         workload.setAcquisitionEra(acquisitionEras = name)
-        workload.setCustodialSite(siteName = name)
 
         self.assertEqual(workload.getValidStatus(), name)
         self.assertEqual(workload.getProcessingVersion(), 0)
         self.assertEqual(workload.getAcquisitionEra(), None)
-        self.assertEqual(workload.getCustodialSite(), name)
 
         return
 
@@ -308,7 +306,7 @@ class WMWorkloadTest(unittest.TestCase):
         testWorkload.setRunWhitelist([4])
         testWorkload.setRunBlacklist([5, 6])
 
-        for task in [procTestTask, mergeTestTask, weirdTestTask]:
+        for task in [procTestTask]:
             self.assertEqual(len(task.siteWhitelist()), 2,
                              "Error: Wrong number of sites in white list.")
             self.assertEqual(len(task.siteBlacklist()), 1,
@@ -320,6 +318,12 @@ class WMWorkloadTest(unittest.TestCase):
                             "Error: Site missing from white list.")
             self.assertTrue("T1_DE_KIT" in task.siteBlacklist(),
                             "Error: Site missing from black list.")
+
+        for task in [mergeTestTask, weirdTestTask]:
+            self.assertEqual(len(task.siteWhitelist()), 0,
+                             "Error: Wrong number of sites in white list.")
+            self.assertEqual(len(task.siteBlacklist()), 0,
+                             "Error: Wrong number of sites in black list.")
 
         for task in [procTestTask, weirdTestTask]:
             self.assertEqual(len(task.inputBlockWhitelist()), 1,
@@ -940,7 +944,8 @@ class WMWorkloadTest(unittest.TestCase):
                                                {"files_per_job": 2, "include_parents": True})
         testWorkload.setJobSplittingParameters("/TestWorkload/ProcessingTask/MergeTask/SkimTask", "RunBased",
                                                {"max_files": 21,
-                                                "some_other_param": "value"})
+                                                "some_other_param": "value",
+                                                "include_parents" : False})
 
         self.assertEqual(testWorkload.startPolicy(), "Block",
                          "Error: Wrong start policy: %s" % testWorkload.startPolicy())
@@ -971,7 +976,8 @@ class WMWorkloadTest(unittest.TestCase):
                          "Error: Wrong min merge size: %s" % stepHelper.minMergeSize())
 
         skimSplitParams = skimTask.jobSplittingParameters(performance = False)
-        self.assertEqual(len(skimSplitParams.keys()), 5,
+        print skimSplitParams.keys()
+        self.assertEqual(len(skimSplitParams.keys()), 6,
                          "Error: Wrong number of params for skim task.")
         self.assertEqual(skimSplitParams["algorithm"], "RunBased",
                          "Error: Wrong job splitting algo for skim task.")
@@ -979,6 +985,8 @@ class WMWorkloadTest(unittest.TestCase):
                          "Error: Wrong number of files per job.")
         self.assertEqual(skimSplitParams["some_other_param"], "value",
                          "Error: Wrong other param.")
+        self.assertEqual(skimSplitParams["include_parents"], False,
+                         "Error: Wrong include_parents.")
         self.assertEqual(skimSplitParams["siteWhitelist"], [],
                          "Error: Site white list was updated.")
         self.assertEqual(skimSplitParams["siteBlacklist"], [],
@@ -1712,8 +1720,10 @@ class WMWorkloadTest(unittest.TestCase):
 
         procTask3CmsswHelper = procTask3Cmssw.getTypeHelper()
         procTask3CmsswHelper.setupPileup(mcPileupConfig, 'dbslocation')
-        self.assertEqual(sorted(testWorkload.listPileupDatasets()), sorted(["/some/minbias/data",
-                                                                            "/some/minbias/mc"]))
+        self.assertTrue('dbslocation' in testWorkload.listPileupDatasets())
+        self.assertEqual(len(testWorkload.listPileupDatasets()), 1)
+        self.assertEqual(testWorkload.listPileupDatasets()['dbslocation'], set(["/some/minbias/data",
+                                                                                "/some/minbias/mc"]))
 
     def testBlockCloseSettings(self):
         """

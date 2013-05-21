@@ -35,6 +35,7 @@ from WMCore.Services.WMStats.WMStatsWriter import WMStatsWriter
 from WMCore.Database.CMSCouch import CouchServer
 from WMCore.Lexicon import sanitizeURL
 from WMCore.WMSpec.WMWorkload import newWorkload
+from WMCore.ACDC.DataCollectionService  import DataCollectionService
 
 class AccountantWorkerException(WMException):
     """
@@ -75,6 +76,7 @@ class AccountantWorker(WMConnectionBase):
         self.setBulkOutcome          = self.daofactory(classname = "Jobs.SetOutcomeBulk")
         self.getWorkflowSpec         = self.daofactory(classname = "Workflow.GetSpecAndNameFromTask")
         self.getJobInfoByID         = self.daofactory(classname = "Jobs.LoadFromID")
+        self.getFullJobInfo         = self.daofactory(classname = "Jobs.LoadForErrorHandler")
 
         self.dbsStatusAction = self.dbsDaoFactory(classname = "DBSBufferFiles.SetStatus")
         self.dbsParentStatusAction = self.dbsDaoFactory(classname = "DBSBufferFiles.GetParentStatus")
@@ -84,16 +86,9 @@ class AccountantWorker(WMConnectionBase):
         self.dbsInsertLocation = self.dbsDaoFactory(classname = "DBSBufferFiles.AddLocation")
         self.dbsSetChecksum    = self.dbsDaoFactory(classname = "DBSBufferFiles.AddChecksumByLFN")
         self.dbsSetRunLumi     = self.dbsDaoFactory(classname = "DBSBufferFiles.AddRunLumi")
-        self.dbsUpdateSpec = self.dbsDaoFactory(classname = "UpdateSpec")
-        self.dbsInsertWorkflow = self.dbsDaoFactory(classname = "InsertWorkflow")
+        self.dbsGetWorkflow    = self.dbsDaoFactory(classname = "ListWorkflow")
 
-        self.dbsNewAlgoAction    = self.dbsDaoFactory(classname = "NewAlgo")
-        self.dbsNewDatasetAction = self.dbsDaoFactory(classname = "NewDataset")
-        self.dbsAssocAction      = self.dbsDaoFactory(classname = "AlgoDatasetAssoc")
-        self.dbsExistsAction     = self.dbsDaoFactory(classname = "DBSBufferFiles.ExistsForAccountant")
         self.dbsLFNHeritage      = self.dbsDaoFactory(classname = "DBSBufferFiles.BulkHeritageParent")
-
-        self.dbsSetDatasetAlgoAction = self.dbsDaoFactory(classname = "SetDatasetAlgo")
 
         self.stateChanger = ChangeState(config)
 
@@ -102,7 +97,11 @@ class AccountantWorker(WMConnectionBase):
 
         # Store location for the specs for DBS
         self.specDir = getattr(config.JobAccountant, 'specDir', None)
-        
+
+        # ACDC service
+        self.dataCollection = DataCollectionService(url = config.ACDC.couchurl,
+                                                    database = config.ACDC.database)
+
         jobDBurl = sanitizeURL(config.JobStateMachine.couchurl)['url']
         jobDBName = config.JobStateMachine.couchDBName
         jobCouchdb  = CouchServer(jobDBurl)
@@ -117,6 +116,8 @@ class AccountantWorker(WMConnectionBase):
         self.listOfJobsToSave  = []
         self.listOfJobsToFail  = []
         self.filesetAssoc      = []
+        self.parentageBinds    = []
+        self.jobsWithSkippedFiles = {}
         self.count = 0
         self.datasetAlgoID     = collections.deque(maxlen = 1000)
         self.datasetAlgoPaths  = collections.deque(maxlen = 1000)
@@ -143,6 +144,8 @@ class AccountantWorker(WMConnectionBase):
         self.listOfJobsToSave  = []
         self.listOfJobsToFail  = []
         self.filesetAssoc      = []
+        self.parentageBinds    = []
+        self.jobsWithSkippedFiles = {}
         gc.collect()
         return
 
@@ -265,7 +268,9 @@ class AccountantWorker(WMConnectionBase):
             self.setBulkOutcome.execute(binds = outcomeBinds,
                                     conn = self.getDBConn(),
                                     transaction = self.existingTransaction())
+
             self.jobCompleteInput.execute(id = idList,
+                                          lfnsToSkip = self.jobsWithSkippedFiles,
                                           conn = self.getDBConn(),
                                           transaction = self.existingTransaction())
             self.stateChanger.propagate(self.listOfJobsToSave, "success", "complete")
@@ -278,9 +283,18 @@ class AccountantWorker(WMConnectionBase):
                                         transaction = self.existingTransaction())
             self.stateChanger.propagate(self.listOfJobsToFail, "jobfailed", "complete")
 
+        # Arrange WMBS parentage
+        if len(self.parentageBinds) > 0:
+            self.setParentageByJob.execute(binds = self.parentageBinds,
+                                           conn = self.getDBConn(),
+                                           transaction = self.existingTransaction())
+
         # Straighten out DBS Parentage
         if len(self.mergedOutputFiles) > 0:
             self.handleDBSBufferParentage()
+
+        if len(self.jobsWithSkippedFiles) > 0:
+            self.handleSkippedFiles()
 
         self.commitTransaction(existingTransaction = False)
 
@@ -334,7 +348,6 @@ class AccountantWorker(WMConnectionBase):
         dbsFile.setProcessingVer(ver = jobReportFile.get('processingVer', None))
         dbsFile.setAcquisitionEra(era = jobReportFile.get('acquisitionEra', None))
         dbsFile.setGlobalTag(globalTag = jobReportFile.get('globalTag', None))
-        dbsFile.setCustodialSite(custodialSite = jobReportFile.get('custodialSite', None))
         dbsFile['task'] = task
 
         for run in jobReportFile["runs"]:
@@ -463,6 +476,13 @@ class AccountantWorker(WMConnectionBase):
             for outputFileset in outputFilesets:
                 self.filesetAssoc.append({"lfn": wmbsFile["lfn"], "fileset": outputFileset})
 
+        # Check if the job had any skipped files
+        # Put them in ACDC containers, we assume full file processing
+        # No job masks
+        skippedFiles = fwkJobReport.getAllSkippedFiles()
+        if skippedFiles:
+            self.jobsWithSkippedFiles[jobID] = skippedFiles
+
         if bookKeepingSuccess:
             # Only save once job is done, and we're sure we made it through okay
             self._mapLocation(wmbsJob['fwjr'])
@@ -574,13 +594,6 @@ class AccountantWorker(WMConnectionBase):
         runLumiBinds  = []
         selfChecksums = None
 
-        taskPaths = map(lambda x: x.get('task', None), self.dbsFilesToCreate)
-        taskPaths = filter(None, taskPaths)
-        taskMap   = self.getWorkflowSpec.execute(taskPaths,
-                                                 conn = self.getDBConn(),
-                                                 transaction = self.existingTransaction())
-
-
         for dbsFile in self.dbsFilesToCreate:
             # Append a tuple in the format specified by DBSBufferFiles.Add
             # Also run insertDatasetAlgo
@@ -616,63 +629,26 @@ class AccountantWorker(WMConnectionBase):
                     logging.error(msg)
                     raise AccountantWorkerException(msg)
 
-            # Handle inserting the workflow using the taskPath and the requestName
-            taskPath     = str(dbsFile.get('task', None))
-            workflowID   = None
-            workflowName = taskMap.get(taskPath, {}).get('name', None)
-            specPath     = taskMap.get(taskPath, {}).get('spec', None)
-            if not (taskPath and workflowName and specPath):
-                logging.error("Could not find workflow in WMBS")
-                logging.error("Not doing workflow association!")
+            # Associate the workflow to the file using the taskPath and the requestName
+            taskPath     = str(dbsFile.get('task'))
+            if not taskPath:
+                msg = "Can't do workflow association, this is not acceptable.\n"
+                msg += "DbsFile : %s" % str(dbsFile)
+                raise AccountantWorkerException(msg)
+            workflowName = taskPath.split('/')[1]
+            workflowPath = '%s:%s' % (workflowName, taskPath)
+            if workflowPath in self.workflowPaths:
+                for wf in self.workflowIDs:
+                    if wf['workflowPath'] == workflowPath:
+                        workflowID = wf['workflowID']
+                        break
             else:
-                workflowPath = '%s:%s' % (workflowName, taskPath)
-                if workflowPath in self.workflowPaths:
-                    for wf in self.workflowIDs:
-                        if wf['workflowPath'] == workflowPath:
-                            workflowID = wf['workflowID']
-                            break
-                if not workflowID:
-                    # Copy the spec to the DBSBuffer spec dir, if not possible
-                    # then don't store the spec in the DBSBuffer database
-                    if self.specDir:
-                        specFile = "%s.pkl" % workflowName
-                        targetFile = os.path.join(self.specDir, specFile)
-                        try:
-                            if not os.path.exists(self.specDir):
-                                os.mkdir(self.specDir)
-                            if not os.path.exists(targetFile):
-                                shutil.copy(specPath, targetFile)
-                            specPath = targetFile
-                        except Exception, ex:
-                            logging.error("Failed copying spec to target dir")
-                            logging.error("Message: %s" % str(ex))
-                            specPath = None
-                    else:
-                        specPath = None
-                    workflowID = self.dbsUpdateSpec.execute(requestName = workflowName,
-                                                            taskPath = taskPath,
-                                                            specPath = specPath)
-                    if not workflowID:
-                        logging.error("The DBSBuffer database doesn't have a record for the workflow %s" % workflowName)
-                        logging.error("This shouldn't happen, the JobAccountant will read the spec and insert the proper record")
-                        if not specPath:
-                            logging.error("No spec either, nothing to do but insert some defaults")
-                            workflowID = self.dbsInsertWorkflow.execute(workflowName, taskPath,
-                                                                       66400,
-                                                                       500,
-                                                                       250000000,
-                                                                       5000000000000)
-                        else:
-                            workload = newWorkload(workflowName)
-                            workload.load(specPath)
-                            workflowID = self.dbsInsertWorkflow.execute(workflowName, taskPath,
-                                                                       workload.getBlockCloseMaxWaitTime(),
-                                                                       workload.getBlockCloseMaxFiles(),
-                                                                       workload.getBlockCloseMaxEvents(),
-                                                                       workload.getBlockCloseMaxSize(),
-                                                                       specPath)
-                    self.workflowPaths.append(workflowPath)
-                    self.workflowIDs.append({'workflowPath': workflowPath, 'workflowID': workflowID})
+                result = self.dbsGetWorkflow.execute(workflowName, taskPath, conn = self.getDBConn(),
+                                                         transaction = self.existingTransaction())
+                workflowID = result['id']
+
+            self.workflowPaths.append(workflowPath)
+            self.workflowIDs.append({'workflowPath': workflowPath, 'workflowID': workflowID})
 
             lfn           = dbsFile['lfn']
             selfChecksums = dbsFile['checksums']
@@ -747,7 +723,6 @@ class AccountantWorker(WMConnectionBase):
             # Nothing to do
             return
 
-        parentageBinds = []
         runLumiBinds   = []
         fileCksumBinds = []
         fileLocations  = []
@@ -759,7 +734,7 @@ class AccountantWorker(WMConnectionBase):
                 continue
 
             selfChecksums = wmbsFile['checksums']
-            parentageBinds.append({'child': lfn, 'jobid': wmbsFile['jid']})
+            self.parentageBinds.append({'child': lfn, 'jobid': wmbsFile['jid']})
             if wmbsFile['runs']:
                 runLumiBinds.append({'lfn': lfn, 'runs': wmbsFile['runs']})
 
@@ -789,10 +764,6 @@ class AccountantWorker(WMConnectionBase):
                                        conn = self.getDBConn(),
                                        transaction = self.existingTransaction())
 
-            self.setParentageByJob.execute(binds = parentageBinds,
-                                           conn = self.getDBConn(),
-                                           transaction = self.existingTransaction())
-
             if runLumiBinds:
                 self.setFileRunLumi.execute(file = runLumiBinds,
                                             conn = self.getDBConn(),
@@ -816,7 +787,6 @@ class AccountantWorker(WMConnectionBase):
             logging.error(msg)
             logging.debug("Printing binds: \n")
             logging.debug("FileCreate binds: %s\n" % fileCreate)
-            logging.debug("Parentage binds: %s\n" % parentageBinds)
             logging.debug("Runlumi binds: %s\n" % runLumiBinds)
             logging.debug("Checksum binds: %s\n" % fileCksumBinds)
             logging.debug("FileLocation binds: %s\n" % fileLocations)
@@ -885,4 +855,25 @@ class AccountantWorker(WMConnectionBase):
                 msg += "BindList: %s" % bindList
                 logging.error(msg)
                 raise AccountantWorkerException(msg)
+        return
+
+    def handleSkippedFiles(self):
+        """
+        _handleSkippedFiles_
+
+        Handle all the skipped files in bulk,
+        the way it handles the skipped files
+        imposes an important restriction:
+        Skipped files should have been processed by a single job
+        in the task and no job mask exists in it.
+        This is suitable for jobs using ParentlessMergeBySize/FileBased/MinFileBased
+        splitting algorithms.
+        Here ACDC records and created and the file are moved
+        to wmbs_sub_files_failed from completed.
+        """
+        jobList = self.getFullJobInfo.execute([{'jobid' : x} for x in self.jobsWithSkippedFiles.keys()],
+                                              fileSelection = self.jobsWithSkippedFiles,
+                                              conn = self.getDBConn(),
+                                              transaction = self.existingTransaction())
+        self.dataCollection.failedJobs(jobList, useMask = False)
         return

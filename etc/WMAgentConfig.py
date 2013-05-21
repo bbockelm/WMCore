@@ -128,6 +128,15 @@ config.DBSUpload.logLevel = globalLogLevel
 config.DBSUpload.workerThreads = 1
 config.DBSUpload.pollInterval = 100
 
+config.component_("DBS3Upload")
+config.DBS3Upload.namespace = "WMComponent.DBS3Buffer.DBS3Upload"
+config.DBS3Upload.componentDir = config.General.workDir + "/DBS3Upload"
+config.DBS3Upload.logLevel = globalLogLevel
+config.DBS3Upload.workerThreads = 1
+config.DBS3Upload.pollInterval = 100
+config.DBS3Upload.dbsUrl = "https://cmsweb-testbed.cern.ch/dbs/prod/global/DBSWriter"
+config.DBS3Upload.dbs3UploadOnly = True
+
 config.section_("DBSInterface")
 #config.DBSInterface.DBSUrl = localDBSUrl
 config.DBSInterface.DBSUrl = globalDBSUrl
@@ -143,7 +152,7 @@ config.PhEDExInjector.componentDir = config.General.workDir + "/PhEDExInjector"
 config.PhEDExInjector.logLevel = globalLogLevel
 config.PhEDExInjector.maxThreads = 1
 config.PhEDExInjector.subscribeDatasets = True
-config.PhEDExInjector.safeOperationMode = False
+config.PhEDExInjector.safeMode = False
 config.PhEDExInjector.phedexurl = "https://cmsweb.cern.ch/phedex/datasvc/json/prod/"
 config.PhEDExInjector.pollInterval = 100
 config.PhEDExInjector.subscribeInterval = 43200
@@ -192,6 +201,13 @@ config.JobStatusLite.componentDir  = config.General.workDir + "/JobStatusLite"
 config.JobStatusLite.logLevel = globalLogLevel
 config.JobStatusLite.pollInterval = 60
 config.JobStatusLite.stateTimeouts = {"Error": 1800, "Running": 169200, "Pending": 360000}
+
+config.component_("JobUpdater")
+config.JobUpdater.namespace = "WMComponent.JobUpdater.JobUpdater"
+config.JobUpdater.componentDir = config.General.workDir + "/JobUpdater"
+config.JobUpdater.logLevel = globalLogLevel
+config.JobUpdater.pollInterval = 120
+config.JobUpdater.reqMgrUrl = 'https://cmsweb.cern.ch/reqmgr/reqMgr'
 
 config.component_("ErrorHandler")
 config.ErrorHandler.namespace = "WMComponent.ErrorHandler.ErrorHandler"

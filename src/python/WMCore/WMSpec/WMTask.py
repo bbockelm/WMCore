@@ -440,6 +440,11 @@ class WMTaskHelper(TreeHelper):
           merge_across_runs
           runWhitelist
 
+        Preserve parameters which can be set up at request creation and if not
+        specified should remain unchanged, at the moment these are:
+            include_parents
+            lheInputFiles
+
         Also preserve the performance section.
         """
         setACDCParams = {}
@@ -449,6 +454,11 @@ class WMTaskHelper(TreeHelper):
             if hasattr(self.data.input.splitting, paramName):
                 setACDCParams[paramName] = getattr(self.data.input.splitting,
                                                    paramName)
+        preservedParams = {}
+        for paramName in ["lheInputFiles", "include_parents"]:
+            if hasattr(self.data.input.splitting, paramName):
+                preservedParams[paramName] = getattr(self.data.input.splitting,
+                                                     paramName)
         performanceConfig = getattr(self.data.input.splitting, "performance", None)
         
         delattr(self.data.input, "splitting")
@@ -456,6 +466,7 @@ class WMTaskHelper(TreeHelper):
         self.data.input.splitting.section_("performance")
 
         setattr(self.data.input.splitting, "algorithm", algoName)
+        self.setSplittingParameters(**preservedParams)
         self.setSplittingParameters(**params)
         self.setSplittingParameters(**setACDCParams)
         if performanceConfig is not None:
@@ -891,11 +902,11 @@ class WMTaskHelper(TreeHelper):
                 outputModuleSection.priority = "Low"
 
             outputModuleSection = getattr(self.data.subscriptions, outputModule)
-            if custodialSites:
+            if custodialSites is not None:
                 outputModuleSection.custodialSites = custodialSites
-            if nonCustodialSites:
+            if nonCustodialSites  is not None:
                 outputModuleSection.nonCustodialSites = nonCustodialSites
-            if autoApproveSites:
+            if autoApproveSites  is not None:
                 outputModuleSection.autoApproveSites = autoApproveSites
             outputModuleSection.priority = priority
             outputModuleSection.custodialSubType = custodialSubType

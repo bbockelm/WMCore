@@ -96,8 +96,7 @@ class JobSubmitterTest(unittest.TestCase):
                        'Processing' : {'pendingSlots' : 5,
                                        'runningSlots' : 10},
                        'Merge' : {'pendingSlots' : 2,
-                                  'runningSlots' : 5,
-                                  'priority' : 5}}
+                                  'runningSlots' : 5}}
 
         resourceControl = ResourceControl()
         resourceControl.insertSite(siteName = site, seName = 'se.%s' % (site),
@@ -106,8 +105,7 @@ class JobSubmitterTest(unittest.TestCase):
         for task in options['tasks']:
             resourceControl.insertThreshold(siteName = site, taskType = task,
                                             maxSlots = options[task]['runningSlots'],
-                                            pendingSlots = options[task]['pendingSlots'],
-                                            priority = options[task].get('priority', 1))
+                                            pendingSlots = options[task]['pendingSlots'])
         if options.get('state'):
             resourceControl.changeSiteState(site, options.get('state'))
 
@@ -757,13 +755,12 @@ class JobSubmitterTest(unittest.TestCase):
         result = getJobsAction.execute(state = 'Executing', jobType = "Processing")
         self.assertEqual(len(result), nSubs * nJobs)
 
-        # All jobs should be at either FNAL or Taiwan
+        # All jobs should be at either FNAL, Taiwan or Uniandes. It's a random selection
         # Check assigned locations
         getLocationAction = self.daoFactory(classname = "Jobs.GetLocation")
         locationDict = getLocationAction.execute([{'jobid' : x} for x in result])
         for entry in locationDict:
             loc = entry['site_name']
-            self.assertNotEqual(loc, 'T3_CO_Uniandes')
             self.assertNotEqual(loc, 'T2_US_Florida')
 
         # Now set everything to down, check we don't submit anything

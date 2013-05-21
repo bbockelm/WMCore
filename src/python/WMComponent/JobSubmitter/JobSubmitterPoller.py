@@ -10,6 +10,7 @@ _JobSubmitterPoller_t_
 Submit jobs for execution.
 """
 
+import random
 import logging
 import threading
 import os.path
@@ -81,6 +82,7 @@ class JobSubmitterPoller(BaseWorkerThread):
 
         # Additions for caching-based JobSubmitter
         self.workflowTimestamps = {}
+        self.workflowPrios      = {}
         self.cachedJobIDs       = set()
         self.cachedJobs         = {}
         self.jobDataCache       = {}
@@ -124,6 +126,7 @@ class JobSubmitterPoller(BaseWorkerThread):
         self.setLocationAction = self.daoFactory(classname = "Jobs.SetLocation")
         self.locationAction = self.daoFactory(classname = "Locations.GetSiteInfo")
         self.setFWJRPathAction = self.daoFactory(classname = "Jobs.SetFWJRPath")
+        self.listWorkflows = self.daoFactory(classname = "Workflow.ListForSubmitter")
 
         # Keep a record of the thresholds in memory
         self.currentRcThresholds = {}
@@ -245,6 +248,12 @@ class JobSubmitterPoller(BaseWorkerThread):
         badJobs = dict([(x, []) for x in range(61101,61104)])
         dbJobs = set()
 
+        logging.info("Refreshing priority cache...")
+        workflows = self.listWorkflows.execute()
+        workflows = filter(lambda x: x['name'] in self.workflowPrios, workflows)
+        for workflow in workflows:
+            self.workflowPrios[workflow['name']] = workflow['priority']
+
         logging.info("Querying WMBS for jobs to be submitted...")
         newJobs = self.listJobsAction.execute()
         logging.info("Found %s new jobs to be submitted." % len(newJobs))
@@ -342,12 +351,15 @@ class JobSubmitterPoller(BaseWorkerThread):
                 locTypeCache = self.cachedJobs[possibleLocation][newJob["type"]]
                 workflowName = newJob['workflow']
                 timestamp    = newJob['timestamp']
+                prio         = newJob['task_priority']
                 if not locTypeCache.has_key(workflowName):
                     locTypeCache[workflowName] = set()
                 if not self.jobDataCache.has_key(workflowName):
                     self.jobDataCache[workflowName] = {}
                 if not workflowName in self.workflowTimestamps:
                     self.workflowTimestamps[workflowName] = timestamp
+                if workflowName not in self.workflowPrios:
+                    self.workflowPrios[workflowName] = prio
 
                 locTypeCache[workflowName].add(jobID)
 
@@ -368,7 +380,8 @@ class JobSubmitterPoller(BaseWorkerThread):
                        newJob['request_name'],
                        loadedJob.get("estimatedJobTime", None),
                        loadedJob.get("estimatedDiskUsage", None),
-                       loadedJob.get("estimatedMemoryUsage", None))
+                       loadedJob.get("estimatedMemoryUsage", None),
+                       newJob['task_name'])
 
             self.jobDataCache[workflowName][jobID] = jobInfo
 
@@ -577,9 +590,19 @@ class JobSubmitterPoller(BaseWorkerThread):
                     cachedJobWorkflow = None
 
                     workflows = taskCache.keys()
-                    # Sorting by timestamp on the subscription
-                    sortingKey = lambda x : self.workflowTimestamps[x]
-                    workflows.sort(key = sortingKey)
+                    # Sorting by prio and timestamp on the subscription
+                    def sortingCmp(x, y):
+                        if (x not in self.workflowTimestamps) or (y not in self.workflowTimestamps):
+                            return -1
+                        if (x not in self.workflowPrios) or (y not in self.workflowPrios):
+                            return -1
+                        if self.workflowPrios[x] > self.workflowPrios[y]:
+                            return -1
+                        elif self.workflowPrios[x] == self.workflowPrios[y]:
+                            return cmp(self.workflowTimestamps[x], self.workflowTimestamps[y])
+                        else:
+                            return 1
+                    workflows.sort(cmp = sortingCmp)
 
                     for workflow in workflows:
                         # Run a while loop until you get a job
@@ -635,10 +658,14 @@ class JobSubmitterPoller(BaseWorkerThread):
                     # Add the sandbox to a global list
                     self.sandboxPackage[package] = cachedJob[3]
 
+                    possibleSites = cachedJob[8]
+                    possibleSiteList = list(possibleSites)
+                    fakeAssignedSiteName = random.choice(possibleSiteList)
+
                     # Create a job dictionary object
                     jobDict = {'id': cachedJob[0],
                                'retry_count': cachedJob[1],
-                               'custom': {'location': siteName},
+                               'custom': {'location': fakeAssignedSiteName},
                                'cache_dir': cachedJob[4],
                                'packageDir': package,
                                'userdn': cachedJob[5],
@@ -646,7 +673,7 @@ class JobSubmitterPoller(BaseWorkerThread):
                                'userrole': cachedJob[7],
                                'priority': taskPriority,
                                'taskType': taskType,
-                               'possibleSites': cachedJob[8],
+                               'possibleSites': possibleSites,
                                'scramArch': cachedJob[9],
                                'swVersion': cachedJob[10],
                                'name': cachedJob[11],
@@ -654,13 +681,16 @@ class JobSubmitterPoller(BaseWorkerThread):
                                'requestName': cachedJob[13],
                                'estimatedJobTime' : cachedJob[14],
                                'estimatedDiskUsage' : cachedJob[15],
-                               'estimatedMemoryUsage' : cachedJob[16]}
+                               'estimatedMemoryUsage' : cachedJob[16],
+                               'taskPriority' : self.workflowPrios[workflow],
+                               'taskName' : cachedJob[17]}
 
                     # Add to jobsToSubmit
                     jobsToSubmit[package].append(jobDict)
 
                     # Deal with accounting
-                    nJobsRequired -= 1
+                    if len(possibleSites) == 1:
+                        nJobsRequired -= 1
                     totalPending  += 1
                     taskPending   += 1
 
@@ -681,6 +711,11 @@ class JobSubmitterPoller(BaseWorkerThread):
         for workflow in workflowsWithTimestamp:
             if workflow not in allWorkflows:
                 del self.workflowTimestamps[workflow]
+
+        workflowsWithPrios = self.workflowPrios.keys()
+        for workflow in workflowsWithPrios:
+            if workflow not in allWorkflows:
+                del self.workflowPrios[workflow]
 
         logging.info("Have %s packages to submit." % len(jobsToSubmit))
         logging.info("Done assigning site locations.")

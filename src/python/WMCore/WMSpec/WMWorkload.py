@@ -187,6 +187,13 @@ class WMWorkloadHelper(PersistencyHelper):
         """
         self.data.sandbox = sandboxPath
 
+    def setPriority(self, priority):
+        """
+        _setPriority_
+
+        Set the priority for the workload
+        """
+        self.data.request.priority = int(priority)
 
     def priority(self):
         """
@@ -476,43 +483,35 @@ class WMWorkloadHelper(PersistencyHelper):
 
         return siteList
 
-    def setSiteWhitelist(self, siteWhitelist, initialTask = None):
+    def setSiteWhitelist(self, siteWhitelist):
         """
         _setSiteWhitelist_
 
-        Set the site white list for all tasks in the workload.
+        Set the site white list for the top level tasks in the workload.
         """
         if type(siteWhitelist) != type([]):
             siteWhitelist = [siteWhitelist]
 
-        if initialTask:
-            taskIterator = initialTask.childTaskIterator()
-        else:
-            taskIterator = self.taskIterator()
+        taskIterator = self.taskIterator()
 
         for task in taskIterator:
             task.setSiteWhitelist(siteWhitelist)
-            self.setSiteWhitelist(siteWhitelist, task)
 
         return
 
-    def setSiteBlacklist(self, siteBlacklist, initialTask = None):
+    def setSiteBlacklist(self, siteBlacklist):
         """
         _setSiteBlacklist_
 
-        Set the site black list for all tasks in the workload.
+        Set the site black list for the top level tasks in the workload.
         """
         if type(siteBlacklist) != type([]):
             siteBlacklist = [siteBlacklist]
 
-        if initialTask:
-            taskIterator = initialTask.childTaskIterator()
-        else:
-            taskIterator = self.taskIterator()
+        taskIterator = self.taskIterator()
 
         for task in taskIterator:
             task.setSiteBlacklist(siteBlacklist)
-            self.setSiteBlacklist(siteBlacklist, task)
 
         return
 
@@ -859,24 +858,6 @@ class WMWorkloadHelper(PersistencyHelper):
         """
         return getattr(self.data.properties, 'campaign', None)
 
-    def setCustodialSite(self, siteName):
-        """
-        _setCustodialSite_
-
-        Set the custody site for all datasets produced
-        by this workflow
-        """
-        self.data.properties.custodialSite = siteName
-        return
-
-    def getCustodialSite(self):
-        """
-        _getCustodialSite_
-
-        Get the custodial site for this workflow
-        """
-        return getattr(self.data.properties, 'custodialSite', None)
-
     def setLFNBase(self, mergedLFNBase, unmergedLFNBase):
         """
         _setLFNBase_
@@ -981,6 +962,11 @@ class WMWorkloadHelper(PersistencyHelper):
             if childTask.taskType() == "Merge":
                 if splitAlgo == "EventBased" and taskHelper.taskType() != "Production":
                     mergeAlgo = "WMBSMergeBySize"
+                    for stepName in childTask.listAllStepNames():
+                        stepHelper = childTask.getStepHelper(stepName)
+                        if stepHelper.stepType() == "CMSSW":
+                            stepCmsswHelper = stepHelper.getTypeHelper()
+                            stepCmsswHelper.setSkipBadFiles(False)
                 else:
                     mergeAlgo = "ParentlessMergeBySize"
 
@@ -1004,6 +990,10 @@ class WMWorkloadHelper(PersistencyHelper):
                     stepHelper.setMinMergeSize(minMergeSize, maxMergeEvents)
                 else:
                     stepHelper.disableStraightToMerge()
+            if stepHelper.stepType() == "CMSSW" and splitAlgo == "WMBSMergeBySize" \
+                and stepHelper.getSkipBadFiles():
+                stepHelper.setSkipBadFiles(False)
+
             if taskHelper.isTopOfTree() and stepHelper.stepType() == "CMSSW" \
                 and taskHelper.taskType() == "Production":
                 stepHelper.setEventsPerLumi(splitArgs.get("events_per_lumi",
@@ -1094,10 +1084,10 @@ class WMWorkloadHelper(PersistencyHelper):
         """
         _listPileUpDataset_
 
-        Returns a list of all the required pile-up datasets
-        in this workload
+        Returns a dictionary with all the required pile-up datasets
+        in this workload and their associated dbs url as the key
         """
-        pileupDatasets = []
+        pileupDatasets = {}
 
         if initialTask:
             taskIterator = initialTask.childTaskIterator()
@@ -1111,13 +1101,16 @@ class WMWorkloadHelper(PersistencyHelper):
                        stepHelper.stepType() == "MulticoreCMSSW":
                     pileupSection = stepHelper.getPileup()
                     if pileupSection is None: continue
+                    dbsUrl = stepHelper.data.dbsUrl
+                    if dbsUrl not in pileupDatasets:
+                        pileupDatasets[dbsUrl] = set()
                     for pileupType in pileupSection.listSections_():
                         datasets = getattr(getattr(stepHelper.data.pileup, pileupType), "dataset")
-                        pileupDatasets.extend(datasets)
+                        pileupDatasets[dbsUrl].update(datasets)
 
-            pileupDatasets.extend(self.listPileupDatasets(task))
+            pileupDatasets.update(self.listPileupDatasets(task))
 
-        return list(set(pileupDatasets))
+        return pileupDatasets
 
     def listOutputProducingTasks(self, initialTask = None):
         """
@@ -1266,6 +1259,7 @@ class WMWorkloadHelper(PersistencyHelper):
                                                                                subInfo[dataset]["CustodialSubType"])
                 else:
                     subInfo[dataset] = taskSubInfo[dataset]
+                subInfo[dataset]["CustodialSites"] = list(set(subInfo[dataset]["CustodialSites"]) - set(subInfo[dataset]["NonCustodialSites"]))
 
         return subInfo
 

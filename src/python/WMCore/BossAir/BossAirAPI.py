@@ -22,6 +22,7 @@ import threading
 import logging
 import subprocess
 
+from WMCore.JobStateMachine.ChangeState import ChangeState
 from WMCore.DAOFactory          import DAOFactory
 from WMCore.WMFactory           import WMFactory
 from WMCore.BossAir.RunJob      import RunJob
@@ -73,6 +74,7 @@ class BossAirAPI(WMConnectionBase):
         self.checkProxy = getattr(config.BossAir, 'checkProxy', False)
         self.cert       = getattr(config.BossAir, 'cert', None)
 
+        self.stateMachine = ChangeState(self.config)
 
         # Create a factory to load plugins
         self.pluginFactory = WMFactory("plugins", self.pluginDir)
@@ -80,7 +82,6 @@ class BossAirAPI(WMConnectionBase):
         self.daoFactory = DAOFactory(package = "WMCore.BossAir",
                                      logger = myThread.logger,
                                      dbinterface = myThread.dbi)
-
 
         self.deleteDAO      = self.daoFactory(classname = "DeleteJobs")
         self.stateDAO       = self.daoFactory(classname = "NewState")
@@ -301,6 +302,10 @@ class BossAirAPI(WMConnectionBase):
         self.updateDAO.execute(jobs = jobs, conn = self.getDBConn(),
                                transaction = self.existingTransaction())
 
+        jobsWithLocation = filter(lambda x : x.get('location') is not None, jobs)
+        if jobsWithLocation:
+            self.stateMachine.recordLocationChange(jobsWithLocation)
+
         self.commitTransaction(existingTransaction)
 
         return
@@ -491,7 +496,6 @@ class BossAirAPI(WMConnectionBase):
         """
 
         jobsToChange   = []
-        loadedJobs     = []
         jobsToComplete = []
         jobsToReturn   = []
         returnList     = []
@@ -774,6 +778,26 @@ class BossAirAPI(WMConnectionBase):
 
         return results
 
+    def updateJobInformation(self, workflow, task, **kwargs):
+        """
+        _updateJobInformation_
+
+        Update the information of jobs in a particular workflow and task,
+        the data will be updated according the keyword arguments which
+        will be interpreted by the individual plugins accordingly.
+        """
+        for plugin in self.plugins.keys():
+            try:
+                pluginInst = self.plugins[plugin]
+                pluginInst.updateJobInformation(workflow, task, **kwargs)
+            except WMException:
+                raise
+            except Exception, ex:
+                msg =  "Unhandled exception while calling update method for plugin %s\n" % plugin
+                msg += str(ex)
+                logging.error(msg)
+                raise BossAirException(msg)
+        return
 
     def _buildRunningJobsFromRunJobs(self, runJobs):
         """

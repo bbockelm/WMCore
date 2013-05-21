@@ -61,6 +61,7 @@ class ReqMgrRESTModel(RESTModel):
         self.workloadDBName = config.workloadDBName
         self.configDBName = config.configDBName
         self.wmstatWriteURL = "%s/%s" % (self.couchUrl.rstrip('/'), config.wmstatDBName)
+        self.acdcURL = "%s/%s" % (self.couchUrl.rstrip('/'), config.acdcDBName)
         self.security_params = {'roles':config.security_roles}
         
         # Optional values for individual methods
@@ -141,6 +142,12 @@ class ReqMgrRESTModel(RESTModel):
                                 'files_merged', 'percent_written',
                                 'percent_success', 'dataset'],
                         secured=True, validation = [self.validateUpdates])
+        self._addMethod('POST', 'closeout', self.closeOutRequest,
+                        args = ['requestName', 'cascade'], secured=True,
+                        validation=[self.isalnum], expires = 0)
+        self._addMethod('POST', 'announce', self.announceRequest,
+                        args = ['requestName', 'cascade'], secured=True,
+                        validation=[self.isalnum], expires = 0)
         self._addMethod('DELETE', 'request', self.deleteRequest,
                         args = ['requestName'],
                         secured=True, security_params=self.security_params,
@@ -420,7 +427,7 @@ class ReqMgrRESTModel(RESTModel):
 
     def putWorkQueue(self, request, url):
         """ Registers the request as "acquired" by the workqueue with the given URL """
-        Utilities.changeStatus(request, "acquired", self.wmstatWriteURL)
+        Utilities.changeStatus(request, "acquired", self.wmstatWriteURL, self.acdcURL)
         return ProdManagement.associateProdMgr(request, urllib.unquote(url))
 
     def validatePutWorkQueue(self, index):
@@ -484,7 +491,7 @@ class ReqMgrRESTModel(RESTModel):
             if status == 'assigned':
                 raise cherrypy.HTTPError(403, "Cannot change status without a team.  Please use PUT /reqmgr/reqMgr/assignment/<team>/<requestName>")
             try:
-                Utilities.changeStatus(requestName, status, self.wmstatWriteURL)
+                Utilities.changeStatus(requestName, status, self.wmstatWriteURL, self.acdcURL)
             except RuntimeError as ex:
                 # ignore some of these errors: https://svnweb.cern.ch/trac/CMSDMWM/ticket/2002
                 if status != 'announced' and status != 'closed-out':
@@ -537,7 +544,8 @@ class ReqMgrRESTModel(RESTModel):
                 # change the clone request state as desired
                 Utilities.changeStatus(newReqSchema["RequestName"],
                                        "assignment-approved",
-                                        self.wmstatWriteURL)
+                                        self.wmstatWriteURL,
+                                        self.acdcURL)
                 return request
             else:
                 msg = "Request '%s' not found." % requestName
@@ -622,6 +630,41 @@ class ReqMgrRESTModel(RESTModel):
         - *dataset*        string (dataset name)
         """
         return ChangeState.updateRequest(requestName, kwargs)
+
+    def closeOutRequest(self, requestName, cascade = False):
+        """
+        Close out a request, if the cascade option is given
+        then it will search for any Resubmission requests
+        for which the given request is a parent and close them out
+        too.
+        """
+        requestsToCloseOut = [requestName]
+        if cascade == "True":
+            requestsToCloseOut.extend(Utilities.retrieveResubmissionChildren(requestName,
+                                                                             self.couchUrl,
+                                                                             self.workloadDBName))
+        for requestName in requestsToCloseOut:
+            Utilities.changeStatus(requestName, 'closed-out',
+                                   self.wmstatWriteURL,
+                                   self.acdcURL)
+        return
+
+    def announceRequest(self, requestName, cascade = False):
+        """
+        Announce a request, if the cascade option is given
+        then it will search for any Resubmission requests
+        for which the given request is a parent and announce them too.
+        """
+        requestsToAnnounce = [requestName]
+        if cascade == "True":
+            requestsToAnnounce.extend(Utilities.retrieveResubmissionChildren(requestName,
+                                                                             self.couchUrl,
+                                                                             self.workloadDBName))
+        for requestName in requestsToAnnounce:
+            Utilities.changeStatus(requestName, 'announced',
+                                   self.wmstatWriteURL,
+                                   self.acdcURL)
+        return
 
     def validateUpdates(self, index):
         """ Check the values for the updates """

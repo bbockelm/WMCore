@@ -6,7 +6,7 @@ CouchFileset.py
 Created by Dave Evans on 2010-03-19.
 Copyright (c) 2010 Fermilab. All rights reserved.
 """
-
+import time
 
 from WMCore.ACDC.Fileset import Fileset
 from WMCore.Database.CouchUtils import connectToCouch, requireOwner, requireCollection, requireFilesetName
@@ -132,7 +132,8 @@ class CouchFileset(Fileset):
         input = {"collection_name": self.collectionName,
                  "collection_type": self.collectionType,
                  "fileset_name": self["name"],
-                 "files": files}
+                 "files": files,
+                 "timestamp": time.time()}
 
         document = CMSCouch.Document(None, input)
         self.owner.ownThis(document)
@@ -191,10 +192,10 @@ class CouchFileset(Fileset):
                   "include_docs": True, "reduce": False}
         result = self.couchdb.loadView("ACDC", "owner_coll_fileset_docs",
                                        params)
-
         self.files = {}
         for row in result["rows"]:
             self.files.update(row["doc"]["files"])
+            self["files"] = self.files
         return
 
     def fileCount(self):

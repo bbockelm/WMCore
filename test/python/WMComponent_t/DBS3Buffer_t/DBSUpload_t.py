@@ -101,18 +101,18 @@ class DBSUploadTest(unittest.TestCase):
         config.CoreDatabase.connectUrl = os.getenv("DATABASE")
         config.CoreDatabase.socket     = os.getenv("DBSOCK")
 
-        config.component_("DBSUpload")
-        config.DBSUpload.pollInterval     = 10
-        config.DBSUpload.logLevel         = 'DEBUG'
-        #config.DBSUpload.dbsUrl           = "https://cmsweb-testbed.cern.ch/dbs/dev/global/DBSWriter"
-        #config.DBSUpload.dbsUrl           = "https://dbs3-dev01.cern.ch/dbs/prod/global/DBSWriter"
-        config.DBSUpload.dbsUrl           = self.dbsUrl
-        config.DBSUpload.namespace        = 'WMComponent.DBS3Buffer.DBSUpload'
-        config.DBSUpload.componentDir     = os.path.join(os.getcwd(), 'Components')
-        config.DBSUpload.nProcesses       = 1
-        config.DBSUpload.dbsWaitTime      = 0.1
-        config.DBSUpload.datasetType      = "VALID"
-        config.DBSUpload.dbs3UploadOnly   = dbs3UploadOnly
+        config.component_("DBS3Upload")
+        config.DBS3Upload.pollInterval     = 10
+        config.DBS3Upload.logLevel         = 'DEBUG'
+        #config.DBS3Upload.dbsUrl           = "https://cmsweb-testbed.cern.ch/dbs/dev/global/DBSWriter"
+        #config.DBS3Upload.dbsUrl           = "https://dbs3-dev01.cern.ch/dbs/prod/global/DBSWriter"
+        config.DBS3Upload.dbsUrl           = self.dbsUrl
+        config.DBS3Upload.namespace        = 'WMComponent.DBS3Buffer.DBSUpload'
+        config.DBS3Upload.componentDir     = os.path.join(os.getcwd(), 'Components')
+        config.DBS3Upload.nProcesses       = 1
+        config.DBS3Upload.dbsWaitTime      = 0.1
+        config.DBS3Upload.datasetType      = "VALID"
+        config.DBS3Upload.dbs3UploadOnly   = dbs3UploadOnly
         return config
 
     def createParentFiles(self, acqEra, nFiles = 10,
@@ -296,7 +296,7 @@ class DBSUploadTest(unittest.TestCase):
                        MaxWaitTime  = 1,
                        MaxFiles = 5,
                        MaxEvents = 250000000,
-                       MaxSize = 9999999999):
+                       MaxSize = 99999000000999999):
         """
         _injectWorklow_
 
@@ -483,9 +483,10 @@ class DBSUploadTest(unittest.TestCase):
             fakeDBS.close()
             self.assertEqual(len(fakeDBSInfo), 2)
             for block in fakeDBSInfo:
-                self.assertEqual(block['block_events'], 140)
-                self.assertEqual(block['file_count'], 7)
-                self.assertEqual(block['open_for_writing'], 0)
+                self.assertTrue('block_events' not in block['block'])
+                self.assertEqual(block['block']['file_count'], 7)
+                self.assertEqual(block['block']['open_for_writing'], 0)
+                self.assertTrue('close_settings' not in block)
             time.sleep(3)
             dbsUploader.algorithm()
             openBlocks = dbsUtil.findOpenBlocks()
@@ -495,13 +496,12 @@ class DBSUploadTest(unittest.TestCase):
             fakeDBS.close()
             self.assertEqual(len(fakeDBSInfo), 3)
             for block in fakeDBSInfo:
-                if block['file_count'] != 6:
-                    self.assertEqual(block['block_events'], 140)
-                    self.assertEqual(block['file_count'], 7)
-                else:
-                    self.assertEqual(block['block_events'], 120)
-                self.assertEqual(block['open_for_writing'], 0)
-    
+                if block['block']['file_count'] != 6:
+                    self.assertEqual(block['block']['file_count'], 7)
+                self.assertTrue('block_events' not in block['block'])
+                self.assertEqual(block['block']['open_for_writing'], 0)
+                self.assertTrue('close_settings' not in block)
+
             # Now check the limit by size and timeout with new files
             acqEra = "TropicalSeason%s" % (int(time.time()))
             workflowName = 'TestWorkload%s' % (int(time.time()))
@@ -521,10 +521,11 @@ class DBSUploadTest(unittest.TestCase):
             fakeDBS.close()
             self.assertEqual(len(fakeDBSInfo), 6)
             for block in fakeDBSInfo:
-                if acqEra in block['block_name']:
-                    self.assertEqual(block['block_events'], 100)
-                    self.assertEqual(block['file_count'], 5)
-                self.assertEqual(block['open_for_writing'], 0)
+                if acqEra in block['block']['block_name']:
+                    self.assertEqual(block['block']['file_count'], 5)
+                self.assertTrue('block_events' not in block['block'])
+                self.assertTrue('close_settings' not in block)
+                self.assertEqual(block['block']['open_for_writing'], 0)
     
             # Put more files, they will go into the same block and then it will be closed
             # after timeout
@@ -541,15 +542,15 @@ class DBSUploadTest(unittest.TestCase):
             fakeDBS.close()
             self.assertEqual(len(fakeDBSInfo), 7)
             for block in fakeDBSInfo:
-                if acqEra in block['block_name']:
-                    if block['file_count'] < 5:
-                        self.assertEqual(block['block_events'], 80)
-                        self.assertEqual(block['file_count'], 4)
+                if acqEra in block['block']['block_name']:
+                    if block['block']['file_count'] < 5:
+                        self.assertEqual(block['block']['file_count'], 4)
                     else:
-                        self.assertEqual(block['block_events'], 100)
-                        self.assertEqual(block['file_count'], 5)
-                self.assertEqual(block['open_for_writing'], 0)
-    
+                        self.assertEqual(block['block']['file_count'], 5)
+                self.assertTrue('block_events' not in block['block'])
+                self.assertEqual(block['block']['open_for_writing'], 0)
+                self.assertTrue('close_settings' not in block)
+
             # Finally test size limits
             acqEra = "TropicalSeason%s" % (int(time.time()))
             workflowName = 'TestWorkload%s' % (int(time.time()))
@@ -570,14 +571,13 @@ class DBSUploadTest(unittest.TestCase):
             fakeDBS.close()
             self.assertEqual(len(fakeDBSInfo), 11)
             for block in fakeDBSInfo:
-                if acqEra in block['block_name']:
-                    if block['file_count'] == 1:
-                        self.assertEqual(block['block_events'], 20)
-                    else:
-                        self.assertEqual(block['block_events'], 40)
-                        self.assertEqual(block['block_size'], 2048)
-                        self.assertEqual(block['file_count'], 2)
-                self.assertEqual(block['open_for_writing'], 0)
+                if acqEra in block['block']['block_name']:
+                    if block['block']['file_count'] != 1:
+                        self.assertEqual(block['block']['block_size'], 2048)
+                        self.assertEqual(block['block']['file_count'], 2)
+                self.assertTrue('block_events' not in block['block'])
+                self.assertEqual(block['block']['open_for_writing'], 0)
+                self.assertTrue('close_settings' not in block)
         except:
             self.fail("We failed at some point in the test")
         finally:

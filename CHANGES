@@ -1,3 +1,66 @@
+0.9.69 to 0.9.70:
+  - ReqMgr2 auxiliary database. Pull request #4619.
+
+0.9.68 to 0.9.69:
+  - PhEDEx improvement. Pull request #4617
+  - Remove custodial site. Pull request #4617
+  - Fix JobPrio update in Condor. Pull request #4616
+
+0.9.67 to 0.9.68:
+  - Bugfix unit test. Pull request #4611.
+  - Fix pileup dataset location tracking. Pull request #4607 from dballesteros7
+  - Fix sizePerEvent for MC. Pull request #4608 from dballesteros7
+  - fix ListForSubmitter DAO to work with Oracle. Pull request #4605 from hufnagel.
+  - workaround for CERN xrootd bug. Pull request #4604 from hufnagel
+  - Bugfixes. Pull request #4602.
+  - Fix Ops proxy argument. Pull request #4601.
+  - ReqMgr Oracle/CouchDB consistency work. Pull request #4600 from zdenekmaxa
+  - Fix column sizes in oracle table. Pull request #4598 from dballesteros7
+  - Clean working directories when testing patching. Pull request #4597 from PerilousApricot
+  - Fixed version of MyProxy module UI free, with unit test. Pull request #4592 from cinquo
+
+0.9.65 to 0.9.67:
+  - Fix issue with DBS3 upload. Pull request #4593
+  - Implement ACDC cleanup operations in ReqMgr. Pull request #4590
+  - Deploy DBS3Upload in standard WMAgent. Pull request #4591
+  - Fix queries for Oracle compatibility. Pull request #4589
+
+0.9.64 to 0.9.65:
+  - filter out "closed-out","announced","aborted","rejected" status from request alert. Pull request #4583
+  - Add ACDC Server CouchApp to cmsweb. Pull request #4587
+  - add detail site job information for request. Pull request #4586
+  - Fix a few unit tests. Pull request #4585
+
+0.9.63 to 0.9.64:
+  - Cascade close-out. Implement the option to close-out/announce requests and cascade the status change to all resubmission children for the request. Pull request #4575.
+  - refactor wmstats adding agent view, adding back search option for job view. Pull request #4577
+  - Support a many-to-many CMS site to SE relation. Pull request #4576.
+  - Fix ASO installation scripts. Pull request #4571
+  - Extend LHEStepZero support. Include a new option that indicates if we are processing lhe input files instead of forking a generator in cmsRun. Pull request #4567
+  - Align Proxy to the slc6 ui. get-proxy-info returns a string in a different format on the UI found on slc6. Pull request #4559
+  - Remove site lists for second-level tasks. Pull Request #4568
+  - Record location changes in WMBS and Couch
+  - Report where job started. Disregard thresholds for jobs with multiple possible running sites. For monitoring purposes, report one random site in the possible site list as the 'pending' site. Pull request #4557
+  - Priority handling improvement allowing priorities to span schedds. Pull request #4554
+  - Fix cases where performance parameters are None. Pull request #4549
+  - Make robust merge jobs. Pull request #4580, #4566
+
+0.9.62 to 0.9.63:
+  - Removed GroupUser couchapp from ReqMgr unittests.  Pull request #4565.
+  - Remove unused etc/ReqMgrConfig.py.  Pull request #4560.
+
+0.9.61 to 0.9.62:
+  - Return ProcessingString and ProcessingVersion from the get request ReqMgr
+    call.  Pull request #4563.
+  - Configuring ASO databases when setting up an agent.  Pull request #4553.
+
+0.9.60 to 0.9.61:
+  - ReqMgr2 project startup. Pull request #4555.
+
+0.9.59 to 0.9.60:
+  - Add OpenSSL dependency to support new myproxy client by Diego
+  - Add Jenkins bits to git
+
 0.9.58 to 0.9.59:
   - Fix broken DBS3Buffer creation in Oracle.  Pull request 4543.
   - Store correctly the SizePerEvent and friends.  Pull request #4540.

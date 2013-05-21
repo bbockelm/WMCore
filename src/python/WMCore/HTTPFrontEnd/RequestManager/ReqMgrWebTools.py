@@ -11,6 +11,7 @@ from xml.parsers.expat import ExpatError
 from cherrypy import HTTPError
 from cherrypy.lib.static import serve_file
 import WMCore.Lexicon
+from WMCore.ACDC.CouchService import CouchService
 from WMCore.Database.CMSCouch import Database
 import cgi
 import WMCore.RequestManager.RequestDB.Settings.RequestStatus             as RequestStatus
@@ -248,8 +249,15 @@ def changePriority(requestName, priority, wmstatUrl = None):
     # change priority in CouchDB
     couchDb = Database(request["CouchWorkloadDBName"], request["CouchURL"])
     fields = {"RequestPriority": newPrior}
-    couchDb.updateDocument(requestName, "ReqMgr", "updaterequest", fields=fields) 
-    
+    couchDb.updateDocument(requestName, "ReqMgr", "updaterequest", fields=fields)
+    # push the change to the WorkQueue
+    response = ProdManagement.getProdMgr(requestName)
+    if response == [] or response[0] is None or response[0] == "":
+        # Request must not be assigned yet, we are safe here
+        return
+    workqueue = WorkQueue.WorkQueue(response[0])
+    workqueue.updatePriority(requestName, priority)
+    return
 
 def abortRequest(requestName):
     """ Changes the state of the request to "aborted", and asks the work queue
@@ -303,7 +311,7 @@ def privileged():
     # and maybe we're running without security, in which case dn = 'None'
     return secure_roles != []
 
-def changeStatus(requestName, status, wmstatUrl):
+def changeStatus(requestName, status, wmstatUrl, acdcUrl):
     """ Changes the status for this request """
     request = GetRequest.getRequestByName(requestName)
     if not status in RequestStatus.StatusList:
@@ -327,10 +335,16 @@ def changeStatus(requestName, status, wmstatUrl):
         else:
             raise cherrypy.HTTPError(400, "You cannot abort a request in state %s" % oldStatus)
         
+    if status == 'announced':
+        # cleanup acdc database, if possible
+        if acdcUrl:
+            url, database = WMCore.Lexicon.splitCouchServiceURL(acdcUrl)
+            acdcService = CouchService(url = url, database = database)
+            acdcService.removeFilesetsByCollectionName(requestName)
+
     # finally, perform the transition, have to do it in both Oracle and CouchDB
     # and in WMStats
-    ChangeState.changeRequestStatus(requestName, status, wmstatUrl=wmstatUrl)        
-
+    ChangeState.changeRequestStatus(requestName, status, wmstatUrl=wmstatUrl)
 
 def prepareForTable(request):
     """ Add some fields to make it easier to display a request """
@@ -677,3 +691,20 @@ def associateCampaign(campaign, requestName, couchURL, couchDBName):
     helper = loadWorkload(request)
     helper.setCampaign(campaign = campaign)
     helper.saveCouch(couchUrl = couchURL, couchDBName = couchDBName)
+
+def retrieveResubmissionChildren(requestName, couchUrl, couchDBName):
+    """
+    _retrieveResubmissionChildren_
+
+    Construct a list of request names which are the resubmission
+    offspring from a request. This is a recursive
+    call with a single requestName as input.
+    The result only includes the children and not the original request.
+    """
+    childrenRequestNames = []
+    reqmgrDb = Database(couchDBName, couchUrl)
+    result = reqmgrDb.loadView('ReqMgr', 'childresubmissionrequests', keys = [requestName])['rows']
+    for child in result:
+        childrenRequestNames.append(child['id'])
+        childrenRequestNames.extend(retrieveResubmissionChildren(child['id'], couchUrl, couchDBName))
+    return childrenRequestNames

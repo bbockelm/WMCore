@@ -304,13 +304,11 @@ class CMSSW(Executor):
         validStatus    = self.workload.getValidStatus()
         inputPath      = self.task.getInputDatasetPath()
         globalTag      = typeHelper.getGlobalTag()
-        custodialSite  = self.workload.getCustodialSite()
         cacheUrl, cacheDB, configID = stepHelper.getConfigInfo()
 
         self.report.setValidStatus(validStatus = validStatus)
         self.report.setGlobalTag(globalTag = globalTag)
         self.report.setInputDataset(inputPath = inputPath)
-        self.report.setCustodialSite(custodialSite = custodialSite)
         self.report.setAcquisitionProcessing(acquisitionEra = acquisitionEra,
                                              processingVer = processingVer,
                                              processingStr = processingStr)
@@ -321,6 +319,7 @@ class CMSSW(Executor):
         # Attach info to files
         self.report.addInfoToOutputFilesForStep(stepName = self.stepName, step = self.step)
 
+        self.report.checkForOutputFiles(stepName = self.stepName)
         self.report.checkForAdlerChecksum(stepName = self.stepName)
         self.report.checkForRunLumiInformation(stepName = self.stepName)
 

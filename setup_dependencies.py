@@ -4,8 +4,7 @@ Manage dependancies by declaring systems here.
 A system can depend on packages or other systems.
 If a package ends with a + include all subpackages.
 """
-dependencies = {
-                'wmc-rest':{
+dependencies = {'wmc-rest':{
                         'bin': ['wmc-dist-patch', 'wmc-dist-unpatch','wmc-httpd'],
                         'packages' : ['WMCore.REST'],
                         'modules': ['WMCore.Configuration'],
@@ -54,7 +53,8 @@ dependencies = {
                                      'WMCore.Services.WMBS',
                                      'WMCore.Services.WMAgent',
                                      'WMCore.Services.Dashboard',
-                                     'WMCore.Services.WMStats'],
+                                     'WMCore.Services.WMStats',
+                                     'WMCore.ACDC'],
 
                         'systems':['wmc-web', 'wmc-runtime'],
                         'statics': ['src/templates/WMCore/WebTools/RequestManager',
@@ -65,6 +65,17 @@ dependencies = {
                                     'src/couchapps/ConfigCache+',
                                     'src/couchapps/WMStats+'],
                         },
+                'reqmgr2':{
+                        'packages': ['WMCore.reqmgr+',
+                                    ],
+                        'systems': ['wmc-rest', 'wmc-runtime', 'wmc-database'],
+                        'statics': ['src/couchapps/ReqMgr+',
+                                    'src/couchapps/ReqMgrAux+',
+                                    'src/couchapps/ConfigCache+',
+                                    'src/couchapps/WMStats+',
+                                    'src/html/reqmgr+',
+                                   ],
+                          },
                 'workqueue':{
                         'packages': ['WMCore.WorkQueue+', 'WMCore.Wrappers+',
                                      'WMCore.Services', 'WMCore.Services.DBS+', 'WMCore.Services.PhEDEx+',
@@ -118,20 +129,6 @@ dependencies = {
                 'wmclient':{
                         'systems': ['wmc-runtime', 'wmc-database']
                         },
-                #'reqmon':{
-                #        'packages': ['WMCore.HTTPFrontEnd',
-                #                     'WMCore.HTTPFrontEnd.GlobalMonitor+',
-                #                     'WMCore.Services',
-                #                     'WMCore.Services.RequestManager+',
-                #                     'WMCore.Services.WorkQueue+',
-                #                     'WMCore.Services.WMBS+',
-                #                     'WMCore.Services.WMAgent+'],
-                #       'modules': ['WMCore.Database.CMSCouch'],
-                #       'systems':['wmc-web'],
-                #        'statics': ['src/html/GlobalMonitor',
-                #                    'src/javascript/WMCore/WebTools/GlobalMonitor+']
-                #        },
-                
                 'reqmon':{
                         'statics': ['src/couchapps/WMStats+', 
                                     'src/couchapps/WorkloadSummary+'],
@@ -139,5 +136,15 @@ dependencies = {
                 'alertscollector': 
                 {
                         'statics': ['src/couchapps/AlertsCollector+'],
-                }
+                },
+                'acdcserver': {
+                        'packages': ['WMCore.ACDC', 'WMCore.GroupUser', 'WMCore.DataStructs',
+                                     'WMCore.Wrappers+', 'WMCore.Database'],
+                        'modules' : ['WMCore.Configuration',
+                                     'WMCore.Algorithms.ParseXMLFile', 'WMCore.Algorithms.Permissions',
+                                     'WMCore.Lexicon', 'WMCore.WMException', 'WMCore.Services.Requests',
+                                     'WMCore.Services.pycurl_manager'],
+                       'statics' : ['src/couchapps/ACDC+',
+                                    'src/couchapps/GroupUser+']
+                       }
                }

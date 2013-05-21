@@ -71,6 +71,7 @@ class ReqMgrBrowser(WebAPI):
         self.workloadDBName = config.workloadDBName
         self.yuiroot = config.yuiroot
         self.wmstatWriteURL = "%s/%s" % (self.couchUrl.rstrip('/'), config.wmstatDBName)
+        self.acdcURL = "%s/%s" % (self.couchUrl.rstrip('/'), config.acdcDBName)
         cherrypy.engine.subscribe('start_thread', self.initThread)
 
     def initThread(self, thread_index):
@@ -172,6 +173,11 @@ class ReqMgrBrowser(WebAPI):
             splitParams["events_per_job"] = int(submittedParams["events_per_job"])
             if submittedParams.has_key("events_per_lumi"):
                 splitParams["events_per_lumi"] = int(submittedParams["events_per_lumi"])
+            if "lheInputFiles" in submittedParams:
+                if str(submittedParams["lheInputFiles"]) == "True":
+                    splitParams["lheInputFiles"] = True
+                else:
+                    splitParams["lheInputFiles"] = False
         elif splittingAlgo == "Harvest":
             splitParams["periodic_harvest_interval"] = int(submittedParams["periodic_harvest_interval"])
         elif 'Merg' in splittingTask:
@@ -349,7 +355,7 @@ class ReqMgrBrowser(WebAPI):
                     Utilities.changePriority(requestName, priority, self.wmstatWriteURL)
                     message += "Changed priority for %s to %s.\n" % (requestName, priority)
                 if status != "":
-                    Utilities.changeStatus(requestName, status, self.wmstatWriteURL)
+                    Utilities.changeStatus(requestName, status, self.wmstatWriteURL, self.acdcURL)
                     message += "Changed status for %s to %s\n" % (requestName, status)
                     if status == "assigned":
                         # make a page to choose teams
