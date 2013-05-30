@@ -76,10 +76,7 @@ def submitWorker(input, results, timeout = None):
             continue
 
         try:
-            print "executing command %s" % command
             stdout, stderr, returnCode = SubprocessAlgos.runCommand(cmd = command, shell = True, timeout = timeout)
-            print "stdout %s" % stdout
-            print "stderr %s" % stderr
             if returnCode == 0:
                 results.put({'stdout': stdout, 'stderr': stderr, 'idList': idList, 'exitCode': returnCode, 'command' : command})
             else:
@@ -435,12 +432,14 @@ class RemoteCondorPlugin(BasePlugin):
 
         return ' && '.join(commands)    
     
-    def makeSubmitCommand(self, remoteJDL):
+    def makeSubmitCommand(self, remoteJDL, initialDir=None):
         wrapper = self.getCommandWrapper()
         
         wrapssh = "%s %s %s" % (wrapper, self.ssh, " ".join(self.gsisshOptions))
-        command = "%s %s " % (wrapssh, self.remoteUserHost)
-        command += "condor_submit %s" % remoteJDL
+        command = "%s %s '" % (wrapssh, self.remoteUserHost)
+        if initialDir:
+            command += "cd %s &&" % initialDir
+        command += "condor_submit %s'" % remoteJDL
 
         return command
     
@@ -649,15 +648,16 @@ class RemoteCondorPlugin(BasePlugin):
         # if you're like Brian and you want to make the JDLs yourself
         # doesn't use the pool since we're at most submitting a job at a time 
         mkdirCommand = self.makeMkdirCommand([randomID])
-        filesToMove = [jdl, "%s/%s" % (randomID, 'submit.jdl')]
+        filesToMove = [[jdl, "%s/%s" % (randomID, 'submit.jdl')]]
+        filesToMove.append([proxyFile, "%s/user.proxy" % randomID])
         for onefile in fileList:
-            filesToMove.append([onefile, "%s/%s" % (randomID, onefile)])
+            filesToMove.append([onefile, "%s/%s" % (randomID, os.path.basename(onefile))])
         scpCommand = self.makeScpOutwardCommand(filesToMove, '')
-        subCommand = self.makeSubmitcommand("%s/%s" % (randomID, 'submit.jdl'))
-        totalCommand = "export X509_USER_PROXY=%s " % proxyFile
-        totalCommand += " && ".join(mkdirCommand, scpCommand, subCommand)
+        subCommand = self.makeSubmitCommand('submit.jdl', randomID)
+        totalCommand = "export X509_USER_PROXY=%s ;" % proxyFile
+        totalCommand += " && ".join([mkdirCommand, scpCommand, subCommand])
         proc = subprocess.Popen(totalCommand, stderr = subprocess.PIPE,
-                                    stdout = subprocess.PIPE, shell = False)
+                                    stdout = subprocess.PIPE, shell = True)
         stdout, stderr = proc.communicate()
         if not proc.returncode == 0:
             # Then things have gotten bad - condor_rm is not responding
@@ -979,27 +979,57 @@ class RemoteCondorPlugin(BasePlugin):
 
         return
 
+    def applyCommand(self, condorCommand, jobs, info = None, constraint = None):
+        """
+        applies a given condor_X command to either a list of jobs or a given
+        constraint
+        FIXME - mid-refactor, only accepts a constraint
+        """
+        command = [self.ssh, self.remoteUserHost]
+        command.extend( self.gsisshOptions )
+        # TODO: batch these commands
+        command.append(" ".join([condorCommand, '-constraint',\
+                                "'%s'" % constraint]))
+        proc = subprocess.Popen(command, stderr = subprocess.PIPE,
+                                stdout = subprocess.PIPE, shell = False)
+        stdout, stderr = proc.communicate()
+        if not proc.returncode == 0:
+            # Then things have gotten bad - condor_rm is not responding
+            logging.error("%s returned non-zero value %s" % (command, str(proc.returncode)))
+            logging.error("command")
+            logging.error(command)
+            logging.error("stdout")
+            logging.error(stdout)
+            logging.error("stderr")
+            logging.error(stderr)
+            logging.error("Skipping classAd processing this round")
+            return False
+
+        return True
+
+
+
     def kill(self, jobs, info = None, constraint = None):
         """
         Kill a list of jobs based on the WMBS job names
 
         """
         if not constraint:
-            constraint = '"WMAgent_JobID =?= %i"' % jobID
+            raise RuntimeError, "RemoteCondorPlugin needs a constraint with which to kill"
 
         for job in jobs:
             jobID = job['jobid']
             command = [self.ssh, self.remoteUserHost]
             command.extend( self.gsisshOptions )
             # TODO: batch these commands
-            command.append(" ".join(['condor_rm', '-constraint',\
+            command.append(" ".join([command, '-constraint',\
                                      constraint]))
             proc = subprocess.Popen(command, stderr = subprocess.PIPE,
                                     stdout = subprocess.PIPE, shell = False)
             stdout, stderr = proc.communicate()
             if not proc.returncode == 0:
                 # Then things have gotten bad - condor_rm is not responding
-                logging.error("condor_rm returned non-zero value %s" % str(proc.returncode))
+                logging.error("%s returned non-zero value %s" % (command, str(proc.returncode)))
                 logging.error("command")
                 logging.error(command)
                 logging.error("stdout")
@@ -1007,9 +1037,15 @@ class RemoteCondorPlugin(BasePlugin):
                 logging.error("stderr")
                 logging.error(stderr)
                 logging.error("Skipping classAd processing this round")
-                return
+                return False
 
-        return
+        return True
+
+    def hold(self, constraint = None):
+        """
+        Hold a list of jobs -- only accepts a constraint
+        """
+        return self.applyCommand('condor_hold', [], constraint = constraint)
 
     # Start with submit functions
 
@@ -1244,18 +1280,18 @@ class RemoteCondorPlugin(BasePlugin):
         jobInfo = {}
         command = [self.ssh, self.remoteUserHost]
         command.extend( self.gsisshOptions )
-        extraString = "condor_q -constraint %s " % constraint
+        extraString = "condor_q -constraint '%s' " % constraint
         attribList = []
-        for attrib in attribs:
-            attribList.extend(['-format', '"(%s:\%s)  "', attrib])
+        for attrib in attribs[:-1]:
+            attribList.extend(['-format', '"(%s:%%s)  "' % attrib, attrib])
+        # The last one has to be handled special to get the end of record thing
+        attribList.extend(['-format', '"(%s:%%s) :::"'%attribs[-1], attribs[-1]])
         extraString += " ".join(attribList)
         command.append(extraString)
 
-        print " ".join( command )
         pipe = subprocess.Popen(command, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = False)
         stdout, stderr = pipe.communicate()
         classAdsRaw = stdout.split(':::')
-
         if not pipe.returncode == 0:
             # Then things have gotten bad - condor_q is not responding
             logging.error("condor_q returned non-zero value %s" % str(pipe.returncode))
