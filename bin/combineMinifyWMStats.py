@@ -12,6 +12,7 @@ globalLib = ["WMStats.Globals.js",
 
 dataStrunct = ["DataStruct/WMStats._StructBase.js",
                "DataStruct/WMStats.GenericRequests.js",
+               "DataStruct/WMStats.Tasks.js",
                "DataStruct/WMStats.Agents.js",
                "DataStruct/WMStats.Sites.js",
                "DataStruct/WMStats.JobSummary.js",
@@ -43,6 +44,7 @@ views = ["Views/WMStats.CategoryMap.js",
          "Views/Tables/WMStats.JobSummaryTable.js",
          "Views/Tables/WMStats.SiteSummaryTable.js",
          "Views/Tables/WMStats.WorkloadSummaryTable.js",
+         "Views/Tables/WMStats.TaskSummaryTable.js",
          "Views/Tables/WMStats.TableController.js",
          "Views/HTMLList/WMStats.JobDetailList.js",
          "Views/HTMLList/WMStats.AgentDetailList.js",
@@ -106,6 +108,7 @@ def concatenateFiles(filelist, fileName):
     destination.close()
     try:
         from subprocess import call
+        print destPath
         call(["uglifyjs", destPath, "-o", destPath])
     except Exception, ex:
         print "%s" % str(ex)

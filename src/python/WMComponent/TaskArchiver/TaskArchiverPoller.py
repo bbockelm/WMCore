@@ -54,6 +54,7 @@ from WMCore.Credential.Proxy                     import Proxy
 from WMComponent.JobCreator.CreateWorkArea       import getMasterName
 from WMComponent.JobCreator.JobCreatorPoller     import retrieveWMSpec
 from WMCore.Services.WMStats.WMStatsWriter       import WMStatsWriter
+from WMCore.Services.RequestManager.RequestManager import RequestManager
 
 from WMCore.DataStructs.MathStructs.DiscreteSummaryHistogram import DiscreteSummaryHistogram
 from WMCore.DataStructs.MathStructs.ContinuousSummaryHistogram import ContinuousSummaryHistogram
@@ -212,10 +213,11 @@ class TaskArchiverPoller(BaseWorkerThread):
         
         if not self.useReqMgrForCompletionCheck:
             #sets the local monitor summary couch db
-            self.wmstatsCouchDB = WMStatsWriter(self.config.TaskArchiver.localWMStatsURL);
+            self.wmstatsCouchDB = WMStatsWriter(self.config.TaskArchiver.localWMStatsURL)
             self.centralCouchDBWriter = self.wmstatsCouchDB;
         else:
-            self.centralCouchDBWriter = WMStatsWriter(self.config.TaskArchiver.centralWMStatsURL);
+            self.centralCouchDBWriter = WMStatsWriter(self.config.TaskArchiver.centralWMStatsURL)
+            self.reqmgrSvc = RequestManager({'endpoint': self.config.TaskArchiver.ReqMgrServiceURL})
         # Start a couch server for getting job info
         # from the FWJRs for committal to archive
         try:
@@ -329,6 +331,8 @@ class TaskArchiverPoller(BaseWorkerThread):
         logging.info("Found %d candidate workflows for deletion" % len(finishedwfs))
         centralCouchAlive = True
         try:
+            #TODO: need to enable when reqmgr2 -wmstats is ready
+            #abortedWorkflows = self.reqmgrCouchDBWriter.workflowsByStatus(["aborted"], format = "dict");
             abortedWorkflows = self.centralCouchDBWriter.workflowsByStatus(["aborted"], format = "dict");
         except Exception, ex:
            centralCouchAlive = False
@@ -357,8 +361,16 @@ class TaskArchiverPoller(BaseWorkerThread):
                         logging.info("status updated to completed %s" % workflow)
     
                     if workflow in abortedWorkflows:
-                        self.centralCouchDBWriter.updateRequestStatus(workflow, "aborted-completed")
-                        logging.info("status updated to aborted-completed %s" % workflow)
+                        #TODO: remove when reqmgr2-wmstats deployed
+                        newState =  "aborted-completed"
+                        self.centralCouchDBWriter.updateRequestStatus(workflow, newState);
+                        # update reqmgr workload document only request mgr is installed
+                        if not self.useReqMgrForCompletionCheck:
+                            # commented out untill all the agent is updated so every request have new state
+                            # TODO: agent should be able to right reqmgr db diretly add the right group in
+                            # reqmgr
+                            #self.reqmgrSvc.updateRequestStatus(workflow, newState); 
+                            logging.info("status updated to %s : %s" % (newState, workflow))
     
                     wfsToDelete[workflow] = {"spec" : spec, "workflows": finishedwfs[workflow]["workflows"]}
     
@@ -522,14 +534,16 @@ class TaskArchiverPoller(BaseWorkerThread):
         for taskName in spec.listAllTaskPathNames():
             failedTmp = self.jobsdatabase.loadView("JobDump", "failedJobsByWorkflowName",
                                                    options = {"startkey": [workflowName, taskName],
-                                                              "endkey": [workflowName, taskName]})['rows']
+                                                              "endkey": [workflowName, taskName],
+                                                              "stale" : "update_after"})['rows']
             for entry in failedTmp:
                 failedJobs.append(entry['value'])
 
         retryData = self.jobsdatabase.loadView("JobDump", "retriesByTask",
                                                options = {'group_level': 3,
                                                           'startkey': [workflowName],
-                                                          'endkey': [workflowName, {}]})['rows']
+                                                          'endkey': [workflowName, {}],
+                                                          "stale" : "update_after"})['rows']
         for row in retryData:
             taskName = row['key'][2]
             count    = str(row['key'][1])
@@ -541,12 +555,19 @@ class TaskArchiverPoller(BaseWorkerThread):
                                             options = {"group_level": 2,
                                                        "startkey": [workflowName],
                                                        "endkey": [workflowName, {}],
-                                                       "group": True})['rows']
-        outputListStr = self.fwjrdatabase.loadList("FWJRDump", "workflowOutputTaskMapping",
-                                                "outputByWorkflowName", options = {"startkey": [workflowName],
-                                                                                   "endkey": [workflowName, {}],
-                                                                                   "reduce": False})
-        outputList = json.loads(outputListStr)
+                                                       "group": True,
+                                                       "stale" : "update_after"})['rows']
+        outputList = {}
+        try:
+            outputListStr = self.fwjrdatabase.loadList("FWJRDump", "workflowOutputTaskMapping",
+                                                    "outputByWorkflowName", options = {"startkey": [workflowName],
+                                                                                       "endkey": [workflowName, {}],
+                                                                                       "reduce": False})
+            outputList = json.loads(outputListStr)
+        except Exception, ex:
+            # Catch couch errors
+            logging.error("Could not load the output task mapping list due to an error")
+            logging.error("Error: %s" % str(ex))
         perf = self.handleCouchPerformance(workflowName = workflowName)
         workflowData['performance'] = {}
         for key in perf:
@@ -598,7 +619,8 @@ class TaskArchiverPoller(BaseWorkerThread):
                 lastRegisteredRetry = None
                 errorCouch = self.fwjrdatabase.loadView("FWJRDump", "errorsByJobID",
                                                         options = {"startkey": [job['id'], 0],
-                                                                   "endkey": [job['id'], {}]})['rows']
+                                                                   "endkey": [job['id'], {}],
+                                                                   "stale" : "update_after"})['rows']
 
                 #Get the input files
                 inputLFNs = [x['lfn'] for x in job['input_files']]
@@ -698,13 +720,17 @@ class TaskArchiverPoller(BaseWorkerThread):
         _getLogArchives_
 
         Gets per Workflow/Task what are the log archives, sends it to the summary to be displayed on the page
-        """        
-        logArchivesTaskStr = self.fwjrdatabase.loadList("FWJRDump", "logCollectsByTask",
-                                                        "logArchivePerWorkflowTask", options = {"reduce" : False},
-                                                        keys = spec.listAllTaskPathNames())
-        logArchivesTask = json.loads(logArchivesTaskStr)
-                                                                        
-        return logArchivesTask
+        """
+        try:
+            logArchivesTaskStr = self.fwjrdatabase.loadList("FWJRDump", "logCollectsByTask",
+                                                            "logArchivePerWorkflowTask", options = {"reduce" : False},
+                                                            keys = spec.listAllTaskPathNames())
+            logArchivesTask = json.loads(logArchivesTaskStr)
+            return logArchivesTask
+        except Exception, ex:
+            logging.error("Couldn't load the logCollect list from CouchDB.")
+            logging.error("Error: %s" % str(ex))
+            return {}
 
     def handleCouchPerformance(self, workflowName):
         """
@@ -714,7 +740,8 @@ class TaskArchiverPoller(BaseWorkerThread):
         """
         perf = self.fwjrdatabase.loadView("FWJRDump", "performanceByWorkflowName",
                                           options = {"startkey": [workflowName],
-                                                     "endkey": [workflowName]})['rows']
+                                                     "endkey": [workflowName],
+                                                     "stale" : "update_after"})['rows']
                                                      
         failedJobs = self.getFailedJobs(workflowName)
 
@@ -787,13 +814,16 @@ class TaskArchiverPoller(BaseWorkerThread):
                             logArchive = self.fwjrdatabase.loadView("FWJRDump", "logArchivesByJobID",
                                                                     options = {"startkey": [x['jobID']],
                                                                                "endkey": [x['jobID'],
-                                                                                          x['retry_count']]})['rows'][0]['value']['lfn']
+                                                                                          x['retry_count']],
+                                                                               "stale" : "update_after"})['rows'][0]['value']['lfn']
                             logCollectID = self.jobsdatabase.loadView("JobDump", "jobsByInputLFN",
                                                                       options = {"startkey": [workflowName, logArchive],
-                                                                                 "endkey": [workflowName, logArchive]})['rows'][0]['value']
+                                                                                 "endkey": [workflowName, logArchive],
+                                                                                 "stale" : "update_after"})['rows'][0]['value']
                             logCollect = self.fwjrdatabase.loadView("FWJRDump", "outputByJobID",
                                                                     options = {"startkey": logCollectID,
-                                                                               "endkey": logCollectID})['rows'][0]['value']['lfn']
+                                                                               "endkey": logCollectID,
+                                                                               "stale" : "update_after"})['rows'][0]['value']['lfn']
                             x['logArchive'] = logArchive.split('/')[-1]
                             x['logCollect'] = logCollect
                         except IndexError, ex:
@@ -835,7 +865,8 @@ class TaskArchiverPoller(BaseWorkerThread):
         # We want ALL the jobs, and I'm sorry, CouchDB doesn't support wildcards, above-than-absurd values will do:
         errorView = self.fwjrdatabase.loadView("FWJRDump", "errorsByWorkflowName",
                                           options = {"startkey": [workflowName, 0, 0],
-                                                     "endkey": [workflowName, 999999999, 999999]})['rows']
+                                                     "endkey": [workflowName, 999999999, 999999],
+                                                     "stale" : "update_after"})['rows']
         failedJobs = []
         for row in errorView:
             jobId = row['value']['jobid']

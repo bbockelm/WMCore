@@ -455,7 +455,7 @@ class WMTaskHelper(TreeHelper):
                 setACDCParams[paramName] = getattr(self.data.input.splitting,
                                                    paramName)
         preservedParams = {}
-        for paramName in ["lheInputFiles", "include_parents"]:
+        for paramName in ["lheInputFiles", "include_parents", "deterministicPileup"]:
             if hasattr(self.data.input.splitting, paramName):
                 preservedParams[paramName] = getattr(self.data.input.splitting,
                                                      paramName)
@@ -768,9 +768,6 @@ class WMTaskHelper(TreeHelper):
             self.data.section_("production")
         
         for opt, arg in options.items():
-            if opt == 'totalevents':
-                self.data.production.totalEvents = arg
-            
             setattr(self.data.production, opt, arg)
     
     def inputDataset(self):

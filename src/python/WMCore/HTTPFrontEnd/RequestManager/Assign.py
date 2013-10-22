@@ -1,11 +1,12 @@
-#!/usr/bin/env python
 """
 Main Module for browsing and modifying requests
 as done by the dataOps operators to assign requests
 to processing sites.
 
-Handles site whitelist/blacklist info as well
+Handles site whitelist/blacklist info as well.
+
 """
+
 import types
 import copy
 import logging
@@ -20,12 +21,14 @@ from WMCore.HTTPFrontEnd.RequestManager.ReqMgrAuth import ReqMgrAuth
 from WMCore.Database.CMSCouch import Database
 import WMCore.Lexicon
 from WMCore.Wrappers import JsonWrapper
-
 from WMCore.WebTools.WebAPI import WebAPI
+from WMCore.Services.SiteDB.SiteDB import SiteDBJSON
+
+
 
 class Assign(WebAPI):
     """ Used by data ops to assign requests to processing sites"""
-    def __init__(self, config, noSiteDB = False):
+    def __init__(self, config, noSiteDB=False):
         """
         _init_
 
@@ -41,7 +44,15 @@ class Assign(WebAPI):
         self.configDBName = config.configDBName
         self.wmstatWriteURL = "%s/%s" % (self.couchUrl.rstrip('/'), config.wmstatDBName)
         if not noSiteDB:
-            self.sites = Utilities.sites(config.sitedb)
+            try:
+                # Download a list of all the sites from SiteDB, uses v2 API.
+                sitedb = SiteDBJSON()
+                self.sites = sitedb.getAllCMSNames()    
+                self.sites.sort()
+            except Exception, ex:
+                msg = "ERROR: Could not retrieve sites from SiteDB, reason: %s" % ex
+                cherrypy.log(msg)
+                raise
         else:
             self.sites = []
         # yet 0.9.40 had also another self.mergedLFNBases which was differentiating
@@ -281,13 +292,24 @@ class Assign(WebAPI):
         helper.setProcessingVersion(kwargs["ProcessingVersion"])
         helper.setAcquisitionEra(kwargs["AcquisitionEra"])
         helper.setProcessingString(kwargs.get("ProcessingString", None))
+
+        # Now verify the output datasets
+        outputDatasets = helper.listOutputDatasets()
+        for dataset in outputDatasets:
+            tokens = dataset.split("/")
+            procds = tokens[2]
+            try:
+                WMCore.Lexicon.procdataset(procds)
+            except AssertionError:
+                raise cherrypy.HTTPError(400, "Bad output dataset name, check the processed dataset.")
+
         #FIXME not validated
         helper.setLFNBase(kwargs["MergedLFNBase"], kwargs["UnmergedLFNBase"])
         helper.setMergeParameters(int(kwargs.get("MinMergeSize", 2147483648)),
                                   int(kwargs.get("MaxMergeSize", 4294967296)),
                                   int(kwargs.get("MaxMergeEvents", 50000)))
         helper.setupPerformanceMonitoring(int(kwargs.get("maxRSS", 2411724)),
-                                          int(kwargs.get("maxVSize", 2411724)),
+                                          int(kwargs.get("maxVSize", 20411724)),
                                           int(kwargs.get("SoftTimeout", 129600)),
                                           int(kwargs.get("GracePeriod", 300)))
 

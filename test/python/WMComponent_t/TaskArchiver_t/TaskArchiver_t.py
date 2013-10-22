@@ -72,7 +72,7 @@ class TaskArchiverTest(unittest.TestCase):
 
         self.testInit = TestInit(__file__)
         self.testInit.setLogging()
-        self.testInit.setDatabaseConnection()
+        self.testInit.setDatabaseConnection(destroyAllDatabase = True)
         self.testInit.setSchema(customModules = ["WMCore.WMBS", "WMComponent.DBS3Buffer"],
                                 useDefault = False)
         self.databaseName = "taskarchiver_t_0"
@@ -157,6 +157,7 @@ class TaskArchiverTest(unittest.TestCase):
         config.TaskArchiver.uploadPublishInfo = self.uploadPublishInfo
         config.TaskArchiver.uploadPublishDir  = self.uploadPublishDir
         config.TaskArchiver.userFileCacheURL = os.getenv('UFCURL', 'http://cms-xen38.fnal.gov:7725/userfilecache/')
+        config.TaskArchiver.ReqMgrServiceURL = "https://cmsweb-dev.cern.ch/reqmgr/rest"
 
         config.section_("ACDC")
         config.ACDC.couchurl                = config.JobStateMachine.couchurl
@@ -313,7 +314,8 @@ class TaskArchiverTest(unittest.TestCase):
         changer.propagate(testJobGroup.jobs, 'executing', 'created')
         changer.propagate(testJobGroup.jobs, 'complete', 'executing')
         changer.propagate(testJobGroup.jobs, 'jobfailed', 'complete')
-        changer.propagate(testJobGroup.jobs, 'exhausted', 'jobfailed')
+        changer.propagate(testJobGroup.jobs, 'retrydone', 'jobfailed')
+        changer.propagate(testJobGroup.jobs, 'exhausted', 'retrydone')
         changer.propagate(testJobGroup.jobs, 'cleanout', 'exhausted')
 
         testSubscription.completeFiles([testFileA, testFileB])
@@ -504,6 +506,10 @@ class TaskArchiverTest(unittest.TestCase):
         jobs = jobdb.loadView("JobDump", "jobsByWorkflowName",
                               options = {"startkey": [workflowName],
                                          "endkey": [workflowName, {}]})['rows']
+        fwjrdb.loadView("FWJRDump", "fwjrsByWorkflowName",
+                        options = {"startkey": [workflowName],
+                                   "endkey": [workflowName, {}]})['rows']
+
         self.assertEqual(len(jobs), 2*self.nJobs)
 
         from WMCore.WMBS.CreateWMBSBase import CreateWMBSBase
@@ -601,11 +607,20 @@ class TaskArchiverTest(unittest.TestCase):
         os.makedirs(cachePath)
         self.assertTrue(os.path.exists(cachePath))
 
+        couchdb      = CouchServer(config.JobStateMachine.couchurl)
+        jobdb        = couchdb.connectDatabase("%s/jobs" % self.databaseName)
+        fwjrdb       = couchdb.connectDatabase("%s/fwjrs" % self.databaseName)
+        jobdb.loadView("JobDump", "jobsByWorkflowName",
+                        options = {"startkey": [workload.name()],
+                                   "endkey": [workload.name(), {}]})['rows']
+        fwjrdb.loadView("FWJRDump", "fwjrsByWorkflowName",
+                        options = {"startkey": [workload.name()],
+                                   "endkey": [workload.name(), {}]})['rows']
+
         testTaskArchiver = TaskArchiverPoller(config = config)
         testTaskArchiver.algorithm()
 
         dbname       = getattr(config.JobStateMachine, "couchDBName")
-        couchdb      = CouchServer(config.JobStateMachine.couchurl)
         workdatabase = couchdb.connectDatabase("%s/workloadsummary" % dbname)
 
         workloadSummary = workdatabase.document(id = workload.name())
@@ -971,7 +986,9 @@ class TaskArchiverTest(unittest.TestCase):
         myThread = threading.currentThread()
         self.dbsDaoFactory = DAOFactory(package="WMComponent.DBS3Buffer", logger=myThread.logger, dbinterface=myThread.dbi)
         self.insertWorkflow = self.dbsDaoFactory(classname="InsertWorkflow")
-        workflowID = self.insertWorkflow.execute(requestName='TestWorkload', taskPath='TestWorkload/Analysis')
+        workflowID = self.insertWorkflow.execute(requestName='TestWorkload', taskPath='TestWorkload/Analysis', 
+                                                 blockMaxCloseTime=100, blockMaxFiles=100,
+                                                 blockMaxEvents=100, blockMaxSize=100)
         myThread.dbi.processData("update dbsbuffer_file set workflow=1 where id < 4")
 
         # Run the test again

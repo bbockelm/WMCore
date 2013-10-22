@@ -13,7 +13,7 @@ from WMCore.WMBS.Subscription import Subscription
 from WMCore.WMBS.Workflow import Workflow
 
 from WMCore.WorkQueue.WMBSHelper import WMBSHelper
-from WMCore.WMSpec.StdSpecs.PromptReco import getTestArguments, promptrecoWorkload
+from WMCore.WMSpec.StdSpecs.PromptReco import PromptRecoWorkloadFactory
 
 from WMCore.Configuration import ConfigSection
 
@@ -71,15 +71,18 @@ class PromptRecoTest(unittest.TestCase):
         Create a Prompt Reconstruction workflow
         and verify it installs into WMBS correctly.
         """
-        testArguments = getTestArguments()
+        testArguments = PromptRecoWorkloadFactory.getTestArguments()
+        testArguments["CouchURL"] = os.environ["COUCHURL"]
+        testArguments["EnableHarvesting"] = True
 
-        testWorkload = promptrecoWorkload("TestWorkload", testArguments)
+        factory = PromptRecoWorkloadFactory()
+        testWorkload = factory.factoryWorkloadConstruction("TestWorkload", testArguments)
         testWorkload.setSpecUrl("somespec")
         testWorkload.setOwnerDetails("dballest@fnal.gov", "T0")
 
         testWMBSHelper = WMBSHelper(testWorkload, "Reco", "SomeBlock", cachepath = self.testDir)
         testWMBSHelper.createTopLevelFileset()
-        testWMBSHelper.createSubscription(testWMBSHelper.topLevelTask, testWMBSHelper.topLevelFileset)
+        testWMBSHelper._createSubscriptionsInWMBS(testWMBSHelper.topLevelTask, testWMBSHelper.topLevelFileset)
 
         recoWorkflow = Workflow(name = "TestWorkload",
                                 task = "/TestWorkload/Reco")
@@ -396,20 +399,21 @@ class PromptRecoTest(unittest.TestCase):
         and verify it installs into WMBS correctly.
         """
         self.setupPromptSkimConfigObject()
-        testArguments = getTestArguments()
+        testArguments = PromptRecoWorkloadFactory.getTestArguments()
         testArguments["PromptSkims"] = [self.promptSkim]
         testArguments["CouchURL"] = os.environ["COUCHURL"]
         testArguments["CouchDBName"] = "promptreco_t"
         testArguments["EnvPath"] = os.environ.get("EnvPath", None)
         testArguments["BinPath"] = os.environ.get("BinPath", None)
 
-        testWorkload = promptrecoWorkload("TestWorkload", testArguments)
+        factory = PromptRecoWorkloadFactory()
+        testWorkload = factory.factoryWorkloadConstruction("TestWorkload", testArguments)
         testWorkload.setSpecUrl("somespec")
         testWorkload.setOwnerDetails("dballest@fnal.gov", "T0")
 
         testWMBSHelper = WMBSHelper(testWorkload, "Reco", "SomeBlock", cachepath = self.testDir)
         testWMBSHelper.createTopLevelFileset()
-        testWMBSHelper.createSubscription(testWMBSHelper.topLevelTask, testWMBSHelper.topLevelFileset)
+        testWMBSHelper._createSubscriptionsInWMBS(testWMBSHelper.topLevelTask, testWMBSHelper.topLevelFileset)
 
         recoWorkflow = Workflow(name = "TestWorkload",
                                 task = "/TestWorkload/Reco")

@@ -32,7 +32,7 @@ databaseSocket = "/opt/MySQL-5.1/var/lib/mysql/mysql.sock"
 couchURL = "http://USERNAME:PASSWORD@COUCHSERVER:5984"
 jobDumpDBName = "wmagent_jobdump"
 jobSummaryDBName = "wmagent_summary"
-acdcDBName = "wmagent_acdc"
+acdcDBName = "acdcserver"
 workqueueDBName = 'workqueue'
 workqueueInboxDbName = 'workqueue_inbox'
 #example of workloadSummary url
@@ -89,7 +89,7 @@ config.JobStateMachine.couchDBName = jobDumpDBName
 config.JobStateMachine.jobSummaryDBName = jobSummaryDBName
 
 config.section_("ACDC")
-config.ACDC.couchurl = couchURL
+config.ACDC.couchurl = "https://cmsweb.cern.ch/couchdb"
 config.ACDC.database = acdcDBName
 
 config.section_("WorkloadSummary")
@@ -216,7 +216,8 @@ config.ErrorHandler.logLevel = globalLogLevel
 config.ErrorHandler.maxRetries = maxJobRetries
 config.ErrorHandler.pollInterval = 240
 config.ErrorHandler.readFWJR = True
-config.ErrorHandler.failureExitCodes = [50660, 50661, 50664]
+config.ErrorHandler.failureExitCodes = [50660, 50661, 50664, 134]
+config.ErrorHandler.maxFailTime = 120000
 
 config.component_("RetryManager")
 config.RetryManager.namespace = "WMComponent.RetryManager.RetryManager"
@@ -265,6 +266,7 @@ config.TaskArchiver.localWMStatsURL = "%s/%s" % (config.JobStateMachine.couchurl
 config.TaskArchiver.centralWMStatsURL = "Central WMStats URL"
 config.TaskArchiver.DataKeepDays = 0.125 # delete after 3 hours
 config.TaskArchiver.cleanCouchInterval = 60 * 20 # 20 min
+config.TaskArchiver.ReqMgrServiceURL = "ReqMgr rest service"
 
 config.webapp_('WMBSService')
 config.WMBSService.default_expires = 0
@@ -491,6 +493,7 @@ config.AnalyticsDataCollector.namespace = "WMComponent.AnalyticsDataCollector.An
 config.AnalyticsDataCollector.componentDir  = config.General.workDir + "/AnalyticsDataCollector"
 config.AnalyticsDataCollector.logLevel = globalLogLevel
 config.AnalyticsDataCollector.pollInterval = 600
+config.AnalyticsDataCollector.agentPollInterval = 300
 config.AnalyticsDataCollector.localCouchURL = "%s/%s" % (config.JobStateMachine.couchurl,  config.JobStateMachine.couchDBName)
 config.AnalyticsDataCollector.localQueueURL = "%s/%s" % (config.WorkQueueManager.couchurl, config.WorkQueueManager.dbname)
 config.AnalyticsDataCollector.localWMStatsURL = "%s/%s" % (config.JobStateMachine.couchurl, config.JobStateMachine.jobSummaryDBName)

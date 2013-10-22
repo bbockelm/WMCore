@@ -3,6 +3,8 @@
 _GlobalWorkQueueConfig_
 
 Global WorkQueue config.
+WARNING: This config is only used for wmagent all-in-one test. Will be deplicated.
+Doesn't replex the current workqueue config which is under deployment
 """
 
 import os

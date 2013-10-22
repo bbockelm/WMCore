@@ -16,7 +16,6 @@ def reqMgrConfig(
     reqMgrHost = "http://%s:%d" % (socket.gethostname().lower(), 8240),
     proxyBase = None,
     couchurl = os.getenv("COUCHURL"),
-    sitedb = 'https://cmsweb.cern.ch/sitedb/json/index/CEtoCMSName?name',
     yuiroot = "/reqmgr/yuiserver/yui",
     configCouchDB = 'reqmgr_config_cache',
     workloadCouchDB = 'reqmgr_workload_cache',
@@ -87,7 +86,6 @@ def reqMgrConfig(
     active.approve.object = 'WMCore.HTTPFrontEnd.RequestManager.Approve'
     active.section_('assign')
     active.assign.object = 'WMCore.HTTPFrontEnd.RequestManager.Assign'
-    active.assign.sitedb = sitedb
     active.section_('closeout')
     active.closeout.object = 'WMCore.HTTPFrontEnd.RequestManager.CloseOut'
     active.section_('announce')

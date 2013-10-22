@@ -54,6 +54,7 @@ dependencies = {'wmc-rest':{
                                      'WMCore.Services.WMAgent',
                                      'WMCore.Services.Dashboard',
                                      'WMCore.Services.WMStats',
+                                     'WMCore.Services.SiteDB+',
                                      'WMCore.ACDC'],
 
                         'systems':['wmc-web', 'wmc-runtime'],
@@ -66,14 +67,15 @@ dependencies = {'wmc-rest':{
                                     'src/couchapps/WMStats+'],
                         },
                 'reqmgr2':{
-                        'packages': ['WMCore.reqmgr+',
+                        'packages': ['WMCore.ReqMgr+',
+                                     'WMCore.Services.Dashboard',
                                     ],
                         'systems': ['wmc-rest', 'wmc-runtime', 'wmc-database'],
                         'statics': ['src/couchapps/ReqMgr+',
                                     'src/couchapps/ReqMgrAux+',
                                     'src/couchapps/ConfigCache+',
                                     'src/couchapps/WMStats+',
-                                    'src/html/reqmgr+',
+                                    'src/html/ReqMgr+',
                                    ],
                           },
                 'workqueue':{
@@ -105,35 +107,40 @@ dependencies = {'wmc-rest':{
                                     'src/templates/WMCore/WebTools/WMBS'],
                         },
                 'asyncstageout':{
-                        'packages': ['WMCore.Agent+', 'WMCore.Storage+',
-                                    'WMCore.Credential', 'WMCore.WorkerThreads',
-                                    'WMCore.Services.PhEDEx+', 'WMCore.ACDC', 'WMCore.Alerts+'],
-                        'modules': ['WMQuality.TestInitCouchApp'],
+                        'packages': ['WMCore.Agent+', 'WMCore.Storage+', 'WMComponent.DBSUpload',
+                                     'WMCore.Credential', 'WMCore.WorkerThreads',
+                                     'WMCore.Services.PhEDEx+', 'WMCore.ACDC', 'WMCore.Alerts+',
+                                     'WMCore.Services.UserFileCache'],
+                        'modules': ['WMQuality.TestInitCouchApp', 'WMCore.Services.Service',
+                                    'WMCore.Services.pycurl_manager', 'WMComponent.__init__'],
                         'systems': ['wmc-database'],
                         'statics': ['src/couchapps/Agent+'],
                         },
                 'crabserver':{
-                        'packages': ['WMCore.WMSpec', 'WMCore.ACDC',
-                                     'WMCore.Storage+', 'WMCore.HTTPFrontEnd.RequestManager+',
-                                     'WMCore.RequestManager+', 'WMComponent.DBSUpload',
-                                     'WMCore.ProcessPool'],
-                        'systems': ['wmc-web'],
+                        'packages': ['WMCore.Credential', 'WMCore.Services.SiteDB+',
+                                     'WMCore.Services.JSONParser+', 'WMCore.Services.PhEDEx+'],
+                        'systems': ['wmc-rest', 'wmc-database'],
                         },
                 'crabclient':{
-                        'packages': ['WMCore.Wrappers+', 'WMCore.Credential', 'PSetTweaks',
-                                     'WMCore.Services.UserFileCache'],
+                        'packages': ['WMCore.Wrappers+', 'WMCore.Credential', 'PSetTweaks'],
                         'systems': ['wmc-base'],
                         'modules': ['WMCore.FwkJobReport.FileInfo', 'WMCore.Services.Requests',
                                     'WMCore.Services.Service', 'WMCore.Services.pycurl_manager'],
+                        },
+                'crabtaskworker':{
+                        'packages':['WMCore..WorkQueue', 'WMCore.Credential', 'WMCore.Algorithms+', 'WMCore.WMSpec+',
+                                     'WMCore.JobSplitting', 'WMCore.Services.SiteDB+', 'WMCore.Services.DBS+'],
+                        'modules': ['WMCore.WMBS.File', 'WMCore.WMBS.WMBSBase', 'WMCore.WMBS.__init__'],
+                        'systems': ['wmc-database'],
                         },
                 'wmclient':{
                         'systems': ['wmc-runtime', 'wmc-database']
                         },
                 'reqmon':{
-                        'statics': ['src/couchapps/WMStats+', 
+                        'statics': ['src/couchapps/WMStats+',
                                     'src/couchapps/WorkloadSummary+'],
                         },
-                'alertscollector': 
+                'alertscollector':
                 {
                         'statics': ['src/couchapps/AlertsCollector+'],
                 },

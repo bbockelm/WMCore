@@ -38,6 +38,7 @@ from WMCore.ACDC.CouchCollection import CouchCollection
 from WMCore.ACDC.CouchFileset import CouchFileset
 from WMCore.DataStructs.File import File
 from WMCore.Services.UUID import makeUUID
+from WMCore.Services.RequestManager.RequestManager import RequestManager
 
 from WMCore_t.RequestManager_t import utils
 
@@ -100,6 +101,10 @@ class ReqMgrTest(RESTBaseUnitTest):
                                  "ACDC", "GroupUser")
         reqMgrHost = self.config.getServerUrl()
         self.jsonSender = JSONRequests(reqMgrHost)
+
+        self.params = {}
+        self.params['endpoint'] = reqMgrHost
+        self.reqService = RequestManager(self.params)
 
     def initialize(self):
         self.config = RequestManagerConfig(
@@ -204,6 +209,11 @@ class ReqMgrTest(RESTBaseUnitTest):
         schema = utils.getAndSetupSchema(self)
         schema['RequestNumEvents'] = 100
         schema['SizePerEvent'] = 101
+        configID = self.createConfig()
+        schema["ConfigCacheID"] = configID
+        schema["CouchDBName"] = self.couchDBName
+        schema["CouchURL"]    = os.environ.get("COUCHURL")
+
         self.doRequest(schema)
 
 
@@ -402,6 +412,10 @@ class ReqMgrTest(RESTBaseUnitTest):
                                                userName = userName,
                                                groupName = groupName,
                                                teamName = teamName)
+        configID = self.createConfig()
+        schema["ConfigCacheID"] = configID
+        schema["CouchDBName"] = self.couchDBName
+        schema["CouchURL"]    = os.environ.get("COUCHURL")
         result = self.jsonSender.put('request/testRequest', schema)
         self.assertEqual(result[1], 200)
         requestName = result[0]['RequestName']
@@ -523,6 +537,10 @@ class ReqMgrTest(RESTBaseUnitTest):
         schema['RunBlacklist'] = [4, 5, 6]
         schema['BlockWhitelist'] = ['/dataset/dataset/dataset#alpha']
         schema['BlockBlacklist'] = ['/dataset/dataset/dataset#beta']
+        configID = self.createConfig()
+        schema["ConfigCacheID"] = configID
+        schema["CouchDBName"] = self.couchDBName
+        schema["CouchURL"]    = os.environ.get("COUCHURL")
 
         result = self.jsonSender.put('request/testRequest', schema)
         self.assertEqual(result[1], 200)
@@ -546,7 +564,8 @@ class ReqMgrTest(RESTBaseUnitTest):
         except HTTPException, ex:
             raises = True
             self.assertEqual(ex.status, 400)
-            self.assertTrue("Bad Run list of type " in ex.result)
+            print ex.result
+            self.assertTrue("Error in Workload Validation: Argument BlockBlacklist type is incorrect in schema." in ex.result)
             pass
         self.assertTrue(raises)
 
@@ -559,7 +578,7 @@ class ReqMgrTest(RESTBaseUnitTest):
         except HTTPException, ex:
             raises = True
             self.assertEqual(ex.status, 400)
-            self.assertTrue("Bad Run list of type " in ex.result)
+            self.assertTrue("Error in Workload Validation: Argument RunWhitelist type is incorrect in schema." in ex.result)
             pass
         self.assertTrue(raises)
 
@@ -570,7 +589,7 @@ class ReqMgrTest(RESTBaseUnitTest):
         except HTTPException, ex:
             raises = True
             self.assertEqual(ex.status, 400)
-            self.assertTrue("Given runList without integer run numbers" in ex.result)
+            self.assertTrue("Error in Workload Validation: Argument RunWhitelist doesn't pass validation." in ex.result)
             pass
         self.assertTrue(raises)
 
@@ -614,6 +633,10 @@ class ReqMgrTest(RESTBaseUnitTest):
                                                userName = userName,
                                                groupName = groupName,
                                                teamName = teamName)
+        configID = self.createConfig()
+        schema["ConfigCacheID"] = configID
+        schema["CouchDBName"] = self.couchDBName
+        schema["CouchURL"]    = os.environ.get("COUCHURL")
         result = self.jsonSender.put('request/testRequest', schema)
         self.assertEqual(result[1], 200)
         requestName = result[0]['RequestName']
@@ -657,13 +680,14 @@ class ReqMgrTest(RESTBaseUnitTest):
         schema["CouchDBName"] = self.couchDBName
         schema["CouchURL"]    = os.environ.get("COUCHURL")
         schema["ConfigCacheID"] = configID
-        schema["InputDatasets"]     = ['/MinimumBias/Run2010B-RelValRawSkim-v1/RAW']
+        schema["InputDataset"]     = '/MinimumBias/Run2010B-RelValRawSkim-v1/RAW'
 
         result = self.jsonSender.put('request/testRequest', schema)
         self.assertEqual(result[1], 200)
         requestName = result[0]['RequestName']
 
-        result = self.jsonSender.get('configIDs?prim=MinimumBias&proc=Commissioning10-v4&tier=RAW')[0]
+        result = self.jsonSender.get('configIDs?prim=MinimumBias&proc=Run2010B-RelValRawSkim-v1&tier=RAW')[0]
+        print result
         self.assertTrue(requestName in result.keys())
         self.assertTrue(configID in result[requestName][0])
         
@@ -677,6 +701,11 @@ class ReqMgrTest(RESTBaseUnitTest):
                                                userName = userName,
                                                groupName = groupName,
                                                teamName = teamName)
+        configID = self.createConfig()
+        schema["ConfigCacheID"] = configID
+        schema["CouchDBName"] = self.couchDBName
+        schema["CouchURL"]    = os.environ.get("COUCHURL")
+        schema["AcquisitionEra"] = "NewEra"
         result = self.jsonSender.put("request", schema)
         self.assertEqual(result[1], 200)
         requestName = result[0]["RequestName"]
@@ -785,6 +814,11 @@ class ReqMgrTest(RESTBaseUnitTest):
                                                userName = userName,
                                                groupName = groupName,
                                                teamName = teamName)
+        configID = self.createConfig()
+        schema["ConfigCacheID"] = configID
+        schema["CouchDBName"] = self.couchDBName
+        schema["CouchURL"]    = os.environ.get("COUCHURL")
+
         result = self.jsonSender.put("request", schema)[0]
         originalRequest = result['RequestName']
         self.setupACDCDatabase(originalRequest, "/%s/DataProcessing" % originalRequest,
@@ -840,6 +874,26 @@ class ReqMgrTest(RESTBaseUnitTest):
             testCollection.setOwner(owner)
             testCollection.populate()
             self.assertEqual(len(testCollection["filesets"]), 0)
+
+            
+    def testM_PutRequestStats(self):
+        userName     = 'Kobe'
+        groupName    = 'Bryant'
+        teamName     = 'Lakers'
+        schema       = utils.getAndSetupSchema(self,
+                                               userName = userName,
+                                               groupName = groupName,
+                                               teamName = teamName)
+        configID = self.createConfig()
+        schema["ConfigCacheID"] = configID
+        schema["CouchDBName"] = self.couchDBName
+        schema["CouchURL"]    = os.environ.get("COUCHURL")
+
+        result = self.jsonSender.put("request", schema)[0]
+        originalRequest = result['RequestName']
+        stats = {'total_jobs': 100, 'input_events': 100, 'input_lumis': 100, 'input_num_files': 100}
+        result = self.reqService.putRequestStats(originalRequest, stats)
+        self.assertEqual(result['RequestName'], originalRequest)
 
 if __name__=='__main__':
     unittest.main()

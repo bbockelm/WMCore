@@ -31,7 +31,7 @@ WMStats.ActiveRequestTableWithJob = function (requestData, containerDiv) {
             },
             { "mDataProp": function (source, type, val) { 
                               var requestInfo = _activePageData.getData(source.workflow);
-                              return requestInfo.request_status[requestInfo.request_status.length -1].status
+                              return requestInfo.request_status[requestInfo.request_status.length -1].status;
                            }, "sTitle": "status",
               "fnRender": function ( o, val ) {
                             var requestInfo = _activePageData.getData(o.aData.workflow);
@@ -114,15 +114,39 @@ WMStats.ActiveRequestTableWithJob = function (requestData, containerDiv) {
                                 var jobs = reqSummary.getTotalCooloff();
                                 var requestInfo = _activePageData.getData(source.workflow);
                                 if (type === 'display') {
-                                  return WMStats.Globals.formatJobLink(jobs, requestInfo.agent_url, source.workflow, "cooloff")
+                                  return WMStats.Globals.formatJobLink(jobs, requestInfo.agent_url, source.workflow, "cooloff");
                                 }
                                 return jobs;
                               }
+            },
+            { "sDefaultContent": "N/A",
+              "sTitle": "GQ", 
+              "mDataProp": function ( source, type, val ) {
+                                if (type === 'display') {
+                                  return WMStats.Globals.getGQLink(source.workflow);
+                                }
+                                return;
+                              }
+            },
+            { "sDefaultContent": "N/A",
+              "sTitle": "LQ", 
+              "mDataProp": function ( source, type, val ) {
+              					var requestInfo = _activePageData.getData(source.workflow);
+                                if (type === 'display') {
+                                  if (requestInfo.agent_url) {
+                                  	return WMStats.Globals.getLQLink(requestInfo.agent_url, source.workflow);	
+                                  }else {
+                                  	return "N/A";
+                                  }
+                                  
+                                }
+                                return;
+                              }
             }
         ]
-    }
+    };
     
-    var filterConfig = {}
+    var filterConfig = {};
     
     tableConfig.aaData = requestData.getList();
     
