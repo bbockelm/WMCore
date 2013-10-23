@@ -13,6 +13,7 @@ import sys
 import select
 import logging
 import time
+import traceback
 
 from WMCore.FwkJobReport.Report import addAttributesToFile, addFiles
 from WMCore.WMSpec.Steps.Executor import Executor
@@ -39,7 +40,7 @@ def analysisFileLFN(fileName, lfnBase, job):
     return lfn
 
 
-def executeCMSSWStack(taskName, stepName, scramSetup, scramCommand, scramProject, scramArch, cmsswVersion, jobReportXML, cmsswCommand, cmsswConfig, cmsswArguments, workDir, userTarball, userFiles, preScripts, scramPreScripts, stdOutFile, stdInFile, jobId, jobRetryCount, invokeCmd = None):
+def executeCMSSWStack(taskName, stepName, scramSetup, scramCommand, scramProject, scramArch, cmsswVersion, jobReportXML, cmsswCommand, cmsswConfig, cmsswArguments, workDir, userTarball, userFiles, preScripts, scramPreScripts, stdOutFile, stdInFile, jobId, jobRetryCount, invokeCmd = None, oneEventMode=False):
     """
     This method load the environment, executes the setup (scram related commands), and then it executes cmsRun.
     """
@@ -67,12 +68,14 @@ def executeCMSSWStack(taskName, stepName, scramSetup, scramCommand, scramProject
     except Exception as ex:
         msg = "Exception raised while running scram.\n"
         msg += str(ex)
+        msg += traceback.format_exc()
         logging.exception(ex)
         logging.critical("Error running SCRAM")
         logging.critical(msg)
         raise WMExecutionFailure(50513, "ScramSetupFailure", msg)
     if projectOutcome > 0:
         msg = scram.diagnostic()
+        msg += traceback.format_exc()
         #self.report.addError(60513, "ScramSetupFailure", msg)
         logging.critical("Error running SCRAM")
         logging.critical(msg)

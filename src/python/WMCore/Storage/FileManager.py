@@ -331,7 +331,7 @@ class FileManager:
             newPfn = None
             try:
                 # FIXME add checksum stuff
-                newPfn = stageOutSlave.doTransfer( localFileName, pfn, stageOut, seName, command, options, protocol, None  )
+                newPfn = stageOutSlave.doTransfer( localFileName, pfn, stageOut, seName, command, options, protocol, None )
             except StageOutError, ex:
                 log.info("Transfer failed in an expected manner. Exception is:")
                 log.info("%s" % str(ex))

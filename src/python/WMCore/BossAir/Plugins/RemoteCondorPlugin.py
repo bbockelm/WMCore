@@ -1288,7 +1288,7 @@ class RemoteCondorPlugin(BasePlugin):
         attribList.extend(['-format', '"(%s:%%s) :::"'%attribs[-1], attribs[-1]])
         extraString += " ".join(attribList)
         command.append(extraString)
-
+        print "executing command %s" % " ".join(command)
         pipe = subprocess.Popen(command, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = False)
         stdout, stderr = pipe.communicate()
         classAdsRaw = stdout.split(':::')

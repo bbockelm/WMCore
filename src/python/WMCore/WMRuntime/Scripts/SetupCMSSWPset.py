@@ -600,7 +600,9 @@ class SetupCMSSWPset(ScriptInterface):
             applyTweak(self.process, outTweak, self.fixupDict)
 
         # revlimiter for testing
-        #self.process.maxEvents.input = 2
+        if self.runOneEvent:
+            print "NOTE: Limiting CMSSW to run a single event only"
+            self.process.maxEvents.input = 1
 
         # check for random seeds and the method of seeding which is in the job baggage
         self.handleSeeding()
@@ -706,8 +708,9 @@ class SetupCMSSWPsetCore(SetupCMSSWPset):
                     where OUTPUT is the name of the output module
     lfnBase:        see above
     outputMods:     a list of names of the output modules, e.g. ['OUTPUT']. Used to tweak process.OUTPUT.filename with OUTPUT.root
+    runOneEvent:    for use in testing, set it so every job only processes one event
     """
-    def __init__(self, location, inputFiles, lumiMask, agentNumber, lfnBase, outputMods):
+    def __init__(self, location, inputFiles, lumiMask, agentNumber, lfnBase, outputMods, oneEventMode=False):
         ScriptInterface.__init__(self)
         self.stepSpace = ConfigSection()
         self.stepSpace.location = location
@@ -733,3 +736,4 @@ class SetupCMSSWPsetCore(SetupCMSSWPset):
 
         self.job['agentNumber'] = agentNumber
         self.job['counter'] = 0
+        self.runOneEvent = oneEventMode

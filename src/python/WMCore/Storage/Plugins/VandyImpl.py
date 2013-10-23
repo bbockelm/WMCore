@@ -60,6 +60,9 @@ class VandyImpl(StageOutImplV2):
                 The toPfn is the LOCAL FILE NAME on the node, without file://
                 the fromPfn is the source PFN, mapped from the LFN using the TFC or overrrides
         """
+        
+        if not os.path.exists(self.BASEDIR):
+            raise RuntimeError, "LStore stageout scripts not found"
 
         # Figures out the src and dst files
         if stageOut:
@@ -98,6 +101,9 @@ class VandyImpl(StageOutImplV2):
 
         Removes the pfn.
         """
+
+        if not os.path.exists(self.BASEDIR):
+            raise RuntimeError, "LStore stageout scripts not found"
 
         command = "%s %s" % (self._rmScript, pfn)
 
