@@ -5,7 +5,7 @@ _LCGImpl_
 Implementation of StageOutImplV2 interface for lcg-cp
 
 """
-import os, os.path, re, logging, subprocess, tempfile
+import os, os.path, re, logging, subprocess, tempfile, time
 from subprocess import Popen
 
 from WMCore.Storage.StageOutImplV2 import StageOutImplV2
@@ -24,7 +24,7 @@ class LCGImpl(StageOutImplV2):
 
     """
 
-    def doTransfer(self, fromPfn, toPfn, stageOut, seName, command, options, protocol, checksums, checksum ):
+    def doTransfer(self, fromPfn, toPfn, stageOut, seName, command, options, protocol, checksums ):
         """
             performs a transfer. stageOut tells you which way to go. returns the new pfn or
             raises on failure. StageOutError (and inherited exceptions) are for expected errors
@@ -56,14 +56,22 @@ class LCGImpl(StageOutImplV2):
         logging.info("Staging out with lcg-cp")
         logging.info("  commandline: %s" % transferCommand)
         self.runCommandFailOnNonZero( transferCommand )
+        
+        for _ in range(5):
+            logging.info("Verifying file sizes")
+            localSize  = os.path.getsize( localFileName )
+            checkCommand = ['lcg-ls', '-l', '-b', '-D', 'srmv2', remoteFileName]
+            logging.info(" ".join(checkCommand))
+            remoteSize = subprocess.Popen(checkCommand,
+                                           stdout=subprocess.PIPE).communicate()[0]
+            logging.info("got the following from lcg-ls %s" % remoteSize)
+            remoteSize = remoteSize.split()[4]
+            logging.info("Localsize: %s Remotesize: %s" % (localSize, remoteSize))
+            if int(localSize) != int(remoteSize):
+                time.sleep(5)
+            else:
+                break
 
-        logging.info("Verifying file sizes")
-        localSize  = os.path.getsize( localFileName )
-        remoteSize = subprocess.Popen(['lcg-ls', '-l', '-b', '-D', 'srmv2', remoteFileName],
-                                       stdout=subprocess.PIPE).communicate()[0]
-        logging.info("got the following from lcg-ls %s" % remoteSize)
-        remoteSize = remoteSize.split()[4]
-        logging.info("Localsize: %s Remotesize: %s" % (localSize, remoteSize))
         if int(localSize) != int(remoteSize):
             try:
                 logging.error("Transfer failed, deleting partial file")
@@ -71,7 +79,8 @@ class LCGImpl(StageOutImplV2):
             except:
                 pass
             raise StageOutFailure, "File sizes don't match"
-
+        else:
+            logging.info("Filesizes match")
 
         return toPfn
 
