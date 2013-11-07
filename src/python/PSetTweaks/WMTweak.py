@@ -314,6 +314,7 @@ def applyTweak(process, tweak, fixup = None):
     for param, value in tweak:
         if fixup and fixup.has_key(param):
             fixup[param](process)
+
         setParameter(process, param, value)
 
 
