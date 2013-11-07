@@ -317,10 +317,10 @@ class CMSSW(Executor):
                                                              configID))
 
         # Attach info to files
-        self.report.addInfoToOutputFilesForStep(stepName = self.stepName, step = self.step)
+        #self.report.addInfoToOutputFilesForStep(stepName = self.stepName, step = self.step)
 
-        self.report.checkForOutputFiles(stepName = self.stepName)
-        self.report.checkForAdlerChecksum(stepName = self.stepName)
+        #self.report.checkForOutputFiles(stepName = self.stepName)
+        #self.report.checkForAdlerChecksum(stepName = self.stepName)
         self.report.checkForRunLumiInformation(stepName = self.stepName)
 
         if self.step.output.keep != True:
