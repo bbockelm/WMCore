@@ -601,7 +601,7 @@ class SetupCMSSWPset(ScriptInterface):
             applyTweak(self.process, outTweak, self.fixupDict)
 
         # revlimiter for testing
-        if self.runOneEvent:
+        if hasattr(self, 'runOneEvent') and self.runOneEvent:
             print "NOTE: Limiting CMSSW to run a single event only"
             self.process.maxEvents.input = 1
 
