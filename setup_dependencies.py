@@ -118,7 +118,8 @@ dependencies = {'wmc-rest':{
                         },
                 'crabserver':{
                         'packages': ['WMCore.Credential', 'WMCore.Services.SiteDB+',
-                                     'WMCore.Services.JSONParser+', 'WMCore.Services.PhEDEx+'],
+                                     'WMCore.Services.JSONParser+', 'WMCore.Services.PhEDEx+',
+                                     'WMCore.WMSpec+'],
                         'systems': ['wmc-rest', 'wmc-database'],
                         },
                 'crabclient':{
@@ -129,7 +130,7 @@ dependencies = {'wmc-rest':{
                         },
                 'crabtaskworker':{
                         'packages':['WMCore..WorkQueue', 'WMCore.Credential', 'WMCore.Algorithms+', 'WMCore.WMSpec+',
-                                     'WMCore.JobSplitting', 'WMCore.Services.SiteDB+', 'WMCore.Services.DBS+'],
+                                     'WMCore.JobSplitting', 'WMCore.Services.SiteDB+', 'WMCore.Services.DBS+', 'WMCore.Services.UserFileCache+'],
                         'modules': ['WMCore.WMBS.File', 'WMCore.WMBS.WMBSBase', 'WMCore.WMBS.__init__'],
                         'systems': ['wmc-database'],
                         },
